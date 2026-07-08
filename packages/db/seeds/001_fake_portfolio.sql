@@ -31,11 +31,11 @@ INSERT INTO securities (id, name, ticker, isin, asset_class, sector, country, cu
   ('btc', 'Bitcoin (BTC)', 'BTC-EUR', NULL, 'Crypto', 'Crypto', 'Crypto', 'EUR');
 
 INSERT INTO positions (id, account_id, security_id, quantity, average_price, current_price) VALUES
-  ('pos-cw8', 'pea', 'cw8', 152, 57.53, 64.6871710526),
-  ('pos-europe', 'pea', 'pea-europe', 98, 57.92, 62.6765306122),
-  ('pos-lvmh', 'pea', 'lvmh', 12, 391.51, 452.70),
-  ('pos-asml', 'cto', 'asml', 8, 502.51, 614.10),
-  ('pos-btc', 'crypto-wallet', 'btc', 0.2789, 11958.80, 16594.8368591);
+  ('pos-cw8', 'pea', 'cw8', 15.2, 575.30, 680.22),
+  ('pos-europe', 'pea', 'pea-europe', 98, 57.92, 39.35),
+  ('pos-lvmh', 'pea', 'lvmh', 12, 391.51, 488.85),
+  ('pos-asml', 'cto', 'asml', 8, 502.51, 1511.40),
+  ('pos-btc', 'crypto-wallet', 'btc', 0.08508, 39160.00, 54400.10);
 
 INSERT INTO transactions (id, date, type, from_account_id, to_account_id, account_id, security_id, quantity, price, fees, amount, note) VALUES
   ('tx-001', '2024-01-12', 'deposit', NULL, 'compte-courant', NULL, NULL, NULL, NULL, 0, 12000.00, 'Apport initial fictif'),
@@ -47,11 +47,11 @@ INSERT INTO transactions (id, date, type, from_account_id, to_account_id, accoun
   ('tx-007', '2024-07-05', 'buy', NULL, NULL, 'crypto-wallet', 'btc', 0.1, 11958.80, 1.50, 1197.38, NULL);
 
 INSERT INTO prices (security_id, date, close_price, currency, source) VALUES
-  ('cw8', '2024-12-31', 64.6871710526, 'EUR', 'manual'),
-  ('pea-europe', '2024-12-31', 62.6765306122, 'EUR', 'manual'),
-  ('lvmh', '2024-12-31', 452.70, 'EUR', 'manual'),
-  ('asml', '2024-12-31', 614.10, 'EUR', 'manual'),
-  ('btc', '2024-12-31', 16594.8368591, 'EUR', 'manual');
+  ('cw8', '2024-12-31', 680.22, 'EUR', 'manual'),
+  ('pea-europe', '2024-12-31', 39.35, 'EUR', 'manual'),
+  ('lvmh', '2024-12-31', 488.85, 'EUR', 'manual'),
+  ('asml', '2024-12-31', 1511.40, 'EUR', 'manual'),
+  ('btc', '2024-12-31', 54400.10, 'EUR', 'manual');
 
 INSERT INTO allocation_targets (bucket, target_percent, min_percent, max_percent) VALUES
   ('ETF', 40, 35, 45),

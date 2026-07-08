@@ -114,24 +114,24 @@ struct NewOnlineSecurity {
     region: Option<String>,
 }
 
-
 #[derive(Debug, Serialize)]
 struct PriceUpdateLine {
     security_id: String,
     name: String,
     ticker: String,
+    used_symbol: String,
     old_price: f64,
     new_price: f64,
+    source: String,
 }
-
 #[derive(Debug, Serialize)]
 struct PriceUpdateError {
     security_id: String,
     name: String,
     ticker: String,
+    used_symbol: String,
     message: String,
 }
-
 #[derive(Debug, Serialize)]
 struct PriceUpdateSummary {
     updated_at: String,
@@ -152,27 +152,30 @@ struct PositionPageRow {
     quantity: f64,
     average_price: f64,
     current_price: f64,
+    price_source: String,
+    price_date: Option<String>,
+    last_price_symbol: String,
+    price_error: Option<String>,
     value: f64,
     cost: f64,
     performance_amount: f64,
     performance_percent: f64,
     price_warning: Option<String>,
 }
-
 #[derive(Debug)]
 
 struct PriceQuote {
     price: f64,
     source: String,
+    used_symbol: String,
 }
-
 struct OpenSecurityForPriceUpdate {
     id: String,
     name: String,
     ticker: String,
+    asset_class: String,
     old_price: f64,
 }
-
 #[derive(Debug, Deserialize)]
 struct NewCashTransaction {
     transaction_type: String,
@@ -378,7 +381,14 @@ fn fetch_latest_price_from_yahoo(symbol: &str) -> Result<f64, String> {
         .map_err(|error| format!("Impossible de créer le client HTTP Yahoo : {error}"))?;
 
     let json = client
-        .get(format!("https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"))
+        .get(format!(
+            "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+        ))
+        .header(
+            "User-Agent",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/126 Safari/537.36",
+        )
+        .header("Accept", "application/json,text/plain,*/*")
         .query(&[("range", "1d"), ("interval", "1d")])
         .send()
         .map_err(|error| format!("Erreur réseau Yahoo Finance : {error}"))?
@@ -430,39 +440,169 @@ fn fetch_latest_price_from_yahoo(symbol: &str) -> Result<f64, String> {
         .ok_or_else(|| "Yahoo Finance n'a pas renvoyé de cours positif.".to_string())
 }
 
-fn fetch_latest_price_with_source(symbol: &str) -> Result<PriceQuote, String> {
-    let yahoo_result = fetch_latest_price_from_yahoo(symbol);
+fn yahoo_symbol_candidates(symbol: &str) -> Vec<String> {
+    let trimmed = symbol.trim();
+    let upper = trimmed.to_uppercase();
+    let mut candidates = Vec::new();
 
-    if let Ok(price) = yahoo_result {
-        return Ok(PriceQuote {
-            price,
-            source: "yahoo".to_string(),
-        });
+    if !trimmed.is_empty() {
+        candidates.push(trimmed.to_string());
     }
 
-    let yahoo_error = yahoo_result.err().unwrap_or_else(|| "Erreur Yahoo inconnue".to_string());
+    if upper.ends_with(".PAR") {
+        candidates.push(format!("{}{}", &trimmed[..trimmed.len() - 4], ".PA"));
+    }
+
+    if upper.ends_with(".AMS") {
+        candidates.push(format!("{}{}", &trimmed[..trimmed.len() - 4], ".AS"));
+    }
+
+    candidates.dedup();
+    candidates
+}
+
+fn preferred_quote_symbol(symbol: &str) -> String {
+    yahoo_symbol_candidates(symbol)
+        .first()
+        .cloned()
+        .unwrap_or_else(|| symbol.trim().to_string())
+}
+
+fn preferred_storage_symbol(symbol: &str) -> String {
+    let trimmed = symbol.trim();
+    let upper = trimmed.to_uppercase();
+
+    if upper.ends_with(".PAR") {
+        return format!("{}{}", &trimmed[..trimmed.len() - 4], ".PA");
+    }
+
+    if upper.ends_with(".AMS") {
+        return format!("{}{}", &trimmed[..trimmed.len() - 4], ".AS");
+    }
+
+    trimmed.to_string()
+}
+
+fn fetch_latest_price_with_source(symbol: &str) -> Result<PriceQuote, String> {
+    let mut yahoo_errors = Vec::new();
+
+    for yahoo_symbol in yahoo_symbol_candidates(symbol) {
+        match fetch_latest_price_from_yahoo(&yahoo_symbol) {
+            Ok(price) => {
+                return Ok(PriceQuote {
+                    price,
+                    source: "yahoo".to_string(),
+                    used_symbol: yahoo_symbol,
+                });
+            }
+            Err(error) => yahoo_errors.push(format!("{yahoo_symbol}: {error}")),
+        }
+    }
+
     let alpha_result = fetch_latest_price_from_alpha_vantage(symbol);
 
     if let Ok(price) = alpha_result {
         return Ok(PriceQuote {
             price,
             source: "alpha_vantage".to_string(),
+            used_symbol: symbol.trim().to_string(),
         });
     }
 
-    let alpha_error = alpha_result.err().unwrap_or_else(|| "Erreur Alpha Vantage inconnue".to_string());
+    let alpha_error = alpha_result
+        .err()
+        .unwrap_or_else(|| "Erreur Alpha Vantage inconnue".to_string());
+    let yahoo_error = if yahoo_errors.is_empty() {
+        "Erreur Yahoo inconnue".to_string()
+    } else {
+        yahoo_errors.join(" | ")
+    };
 
     Err(format!(
         "Yahoo Finance indisponible ({yahoo_error}) puis Alpha Vantage indisponible ({alpha_error})"
     ))
 }
 
-fn fetch_latest_price(symbol: &str) -> Result<f64, String> {
-    fetch_latest_price_with_source(symbol).map(|quote| quote.price)
-}
-
 fn is_suspicious_price_jump(old_price: f64, new_price: f64) -> bool {
     old_price > 0.0 && (new_price > old_price * 3.0 || new_price < old_price / 3.0)
+}
+
+fn is_suspicious_price_jump_for_asset(asset_class: &str, old_price: f64, new_price: f64) -> bool {
+    if asset_class.eq_ignore_ascii_case("Crypto") {
+        return old_price > 0.0 && (new_price > old_price * 10.0 || new_price < old_price / 10.0);
+    }
+
+    is_suspicious_price_jump(old_price, new_price)
+}
+
+fn ensure_price_update_status_table(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS price_update_status (
+              security_id TEXT PRIMARY KEY,
+              attempted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              provider TEXT NOT NULL DEFAULT '',
+              used_symbol TEXT NOT NULL DEFAULT '',
+              status TEXT NOT NULL,
+              old_price REAL NOT NULL DEFAULT 0,
+              new_price REAL,
+              message TEXT,
+              FOREIGN KEY (security_id) REFERENCES securities(id) ON DELETE CASCADE
+            );
+            ",
+        )
+        .map_err(|error| format!("Erreur création table price_update_status : {error}"))
+}
+
+fn upsert_price_update_status(
+    connection: &Connection,
+    security_id: &str,
+    provider: &str,
+    used_symbol: &str,
+    status: &str,
+    old_price: f64,
+    new_price: Option<f64>,
+    message: Option<&str>,
+) -> Result<(), String> {
+    ensure_price_update_status_table(connection)?;
+
+    connection
+        .execute(
+            "
+            INSERT INTO price_update_status (
+              security_id,
+              attempted_at,
+              provider,
+              used_symbol,
+              status,
+              old_price,
+              new_price,
+              message
+            )
+            VALUES (?1, datetime('now', 'localtime'), ?2, ?3, ?4, ?5, ?6, ?7)
+            ON CONFLICT(security_id) DO UPDATE SET
+              attempted_at = excluded.attempted_at,
+              provider = excluded.provider,
+              used_symbol = excluded.used_symbol,
+              status = excluded.status,
+              old_price = excluded.old_price,
+              new_price = excluded.new_price,
+              message = excluded.message
+            ",
+            params![
+                security_id,
+                provider,
+                used_symbol,
+                status,
+                old_price,
+                new_price,
+                message
+            ],
+        )
+        .map_err(|error| format!("Erreur enregistrement statut prix {security_id} : {error}"))?;
+
+    Ok(())
 }
 
 fn read_security_by_id(connection: &Connection, security_id: &str) -> Result<DbSecurity, String> {
@@ -564,7 +704,21 @@ fn read_raw_positions(connection: &Connection) -> Result<Vec<RawPosition>, Strin
               a.name,
               p.quantity,
               p.quantity * p.current_price AS value,
-              p.quantity * p.average_price AS cost
+              p.quantity * p.average_price AS cost,
+              (
+                SELECT ph.source
+                FROM prices ph
+                WHERE ph.security_id = s.id
+                ORDER BY ph.date DESC, ph.created_at DESC
+                LIMIT 1
+              ) AS price_source,
+              (
+                SELECT ph.date
+                FROM prices ph
+                WHERE ph.security_id = s.id
+                ORDER BY ph.date DESC, ph.created_at DESC
+                LIMIT 1
+              ) AS price_date
             FROM positions p
             JOIN securities s ON s.id = p.security_id
             JOIN accounts a ON a.id = p.account_id
@@ -713,7 +867,11 @@ fn get_dashboard_data() -> Result<DashboardData, String> {
             account: position.account_name.clone(),
             quantity: position.quantity,
             value: position.value,
-            weight: if total > 0.0 { (position.value / total) * 100.0 } else { 0.0 },
+            weight: if total > 0.0 {
+                (position.value / total) * 100.0
+            } else {
+                0.0
+            },
             performance_percent: if position.cost > 0.0 {
                 ((position.value - position.cost) / position.cost) * 100.0
             } else {
@@ -730,7 +888,9 @@ fn get_dashboard_data() -> Result<DashboardData, String> {
     ]);
 
     for position in &raw_positions {
-        *allocation_values.entry(position.category.clone()).or_insert(0.0) += position.value;
+        *allocation_values
+            .entry(position.category.clone())
+            .or_insert(0.0) += position.value;
     }
 
     let mut statement = connection
@@ -755,7 +915,11 @@ fn get_dashboard_data() -> Result<DashboardData, String> {
             let bucket: String = row.get(0)?;
             let target_percent: f64 = row.get(1)?;
             let value = *allocation_values.get(&bucket).unwrap_or(&0.0);
-            let actual_percent = if total > 0.0 { (value / total) * 100.0 } else { 0.0 };
+            let actual_percent = if total > 0.0 {
+                (value / total) * 100.0
+            } else {
+                0.0
+            };
 
             Ok(DashboardAllocation {
                 bucket,
@@ -776,7 +940,9 @@ fn get_dashboard_data() -> Result<DashboardData, String> {
     let mut positions_by_account = HashMap::<String, f64>::new();
 
     for position in &raw_positions {
-        *positions_by_account.entry(position.account_id.clone()).or_insert(0.0) += position.value;
+        *positions_by_account
+            .entry(position.account_id.clone())
+            .or_insert(0.0) += position.value;
     }
 
     let dashboard_accounts = accounts
@@ -792,7 +958,11 @@ fn get_dashboard_data() -> Result<DashboardData, String> {
                 cash_balance: account.cash_balance,
                 positions_value,
                 total_value,
-                weight: if total > 0.0 { (total_value / total) * 100.0 } else { 0.0 },
+                weight: if total > 0.0 {
+                    (total_value / total) * 100.0
+                } else {
+                    0.0
+                },
             }
         })
         .collect::<Vec<_>>();
@@ -1050,10 +1220,10 @@ fn create_security(input: NewSecurityInput) -> Result<DbSecurity, String> {
     })
 }
 
-
 #[tauri::command]
 fn get_positions_page() -> Result<Vec<PositionPageRow>, String> {
     let connection = open_database()?;
+    ensure_price_update_status_table(&connection)?;
 
     let mut statement = connection
         .prepare(
@@ -1068,10 +1238,25 @@ fn get_positions_page() -> Result<Vec<PositionPageRow>, String> {
               p.average_price,
               p.current_price,
               p.quantity * p.current_price AS value,
-              p.quantity * p.average_price AS cost
+              p.quantity * p.average_price AS cost,
+              COALESCE(lp.source, 'manual') AS price_source,
+              lp.date AS price_date,
+              COALESCE(NULLIF(pus.used_symbol, ''), s.ticker) AS last_price_symbol,
+              CASE
+                WHEN pus.status IN ('kept', 'error') THEN pus.message
+                ELSE NULL
+              END AS price_error
             FROM positions p
             JOIN securities s ON s.id = p.security_id
             JOIN accounts a ON a.id = p.account_id
+            LEFT JOIN prices lp ON lp.id = (
+              SELECT p2.id
+              FROM prices p2
+              WHERE p2.security_id = s.id
+              ORDER BY p2.date DESC, p2.created_at DESC
+              LIMIT 1
+            )
+            LEFT JOIN price_update_status pus ON pus.security_id = s.id
             WHERE p.quantity > 0
             ORDER BY value DESC
             ",
@@ -1085,6 +1270,7 @@ fn get_positions_page() -> Result<Vec<PositionPageRow>, String> {
             let current_price: f64 = row.get(7)?;
             let value: f64 = row.get(8)?;
             let cost: f64 = row.get(9)?;
+            let price_error: Option<String> = row.get(13)?;
             let performance_amount = value - cost;
             let performance_percent = if cost > 0.0 {
                 (performance_amount / cost) * 100.0
@@ -1092,10 +1278,10 @@ fn get_positions_page() -> Result<Vec<PositionPageRow>, String> {
                 0.0
             };
 
-            let price_warning = if average_price > 0.0 && current_price > average_price * 3.0 {
-                Some("Cours très supérieur au prix moyen : à vérifier.".to_string())
-            } else if average_price > 0.0 && current_price < average_price / 3.0 {
-                Some("Cours très inférieur au prix moyen : à vérifier.".to_string())
+            let price_warning = if let Some(message) = price_error.clone() {
+                Some(message)
+            } else if current_price <= 0.0 {
+                Some("Cours absent ou nul : à vérifier.".to_string())
             } else {
                 None
             };
@@ -1109,6 +1295,10 @@ fn get_positions_page() -> Result<Vec<PositionPageRow>, String> {
                 quantity,
                 average_price,
                 current_price,
+                price_source: row.get(10)?,
+                price_date: row.get(11)?,
+                last_price_symbol: row.get(12)?,
+                price_error,
                 value,
                 cost,
                 performance_amount,
@@ -1151,9 +1341,22 @@ fn search_online_assets(query: String) -> Result<Vec<OnlineAssetSearchResult>, S
         .filter_map(|item| {
             let symbol = item.get("1. symbol")?.as_str()?.trim().to_string();
             let name = item.get("2. name")?.as_str()?.trim().to_string();
-            let alpha_type = item.get("3. type").and_then(Value::as_str).unwrap_or("Equity");
-            let region = item.get("4. region").and_then(Value::as_str).unwrap_or("—").trim().to_string();
-            let currency = item.get("8. currency").and_then(Value::as_str).unwrap_or("EUR").trim().to_string();
+            let alpha_type = item
+                .get("3. type")
+                .and_then(Value::as_str)
+                .unwrap_or("Equity");
+            let region = item
+                .get("4. region")
+                .and_then(Value::as_str)
+                .unwrap_or("—")
+                .trim()
+                .to_string();
+            let currency = item
+                .get("8. currency")
+                .and_then(Value::as_str)
+                .unwrap_or("EUR")
+                .trim()
+                .to_string();
             let match_score = item
                 .get("9. matchScore")
                 .and_then(Value::as_str)
@@ -1177,7 +1380,7 @@ fn search_online_assets(query: String) -> Result<Vec<OnlineAssetSearchResult>, S
 
 #[tauri::command]
 fn create_security_from_online_result(input: NewOnlineSecurity) -> Result<DbSecurity, String> {
-    let symbol = input.symbol.trim().to_string();
+    let symbol = preferred_storage_symbol(input.symbol.trim());
     let name = input.name.trim().to_string();
     let asset_class = input.asset_class.trim().to_string();
     let currency = input.currency.trim().to_string();
@@ -1194,7 +1397,8 @@ fn create_security_from_online_result(input: NewOnlineSecurity) -> Result<DbSecu
         return Err("Classe d'actif invalide.".to_string());
     }
 
-    let latest_price = fetch_latest_price(&symbol)?;
+    let latest_quote = fetch_latest_price_with_source(&symbol)?;
+    let latest_price = latest_quote.price;
 
     let mut connection = open_database()?;
     let existing_security_id = connection
@@ -1239,12 +1443,12 @@ fn create_security_from_online_result(input: NewOnlineSecurity) -> Result<DbSecu
         .execute(
             "
             INSERT INTO prices (security_id, date, close_price, currency, source)
-            VALUES (?1, date('now'), ?2, ?3, 'alpha_vantage')
+            VALUES (?1, date('now'), ?2, ?3, ?4)
             ON CONFLICT(security_id, date, source) DO UPDATE SET
               close_price = excluded.close_price,
               currency = excluded.currency
             ",
-            params![security_id, latest_price, currency],
+            params![security_id, latest_price, currency, latest_quote.source],
         )
         .map_err(|error| format!("Erreur enregistrement du cours : {error}"))?;
 
@@ -1267,10 +1471,10 @@ fn create_security_from_online_result(input: NewOnlineSecurity) -> Result<DbSecu
     read_security_by_id(&connection, &security_id)
 }
 
-
 #[tauri::command]
 fn update_open_position_prices() -> Result<PriceUpdateSummary, String> {
     let connection = open_database()?;
+    ensure_price_update_status_table(&connection)?;
 
     let securities = {
         let mut statement = connection
@@ -1280,6 +1484,7 @@ fn update_open_position_prices() -> Result<PriceUpdateSummary, String> {
                   s.id,
                   s.name,
                   s.ticker,
+                  s.asset_class,
                   COALESCE(
                     (
                       SELECT p.close_price
@@ -1315,7 +1520,8 @@ fn update_open_position_prices() -> Result<PriceUpdateSummary, String> {
                     id: row.get(0)?,
                     name: row.get(1)?,
                     ticker: row.get(2)?,
-                    old_price: row.get(3)?,
+                    asset_class: row.get(3)?,
+                    old_price: row.get(4)?,
                 })
             })
             .map_err(|error| format!("Erreur lecture actifs à mettre à jour : {error}"))?;
@@ -1323,7 +1529,9 @@ fn update_open_position_prices() -> Result<PriceUpdateSummary, String> {
         let mut securities = Vec::new();
 
         for row in rows {
-            securities.push(row.map_err(|error| format!("Erreur conversion actif à mettre à jour : {error}"))?);
+            securities.push(
+                row.map_err(|error| format!("Erreur conversion actif à mettre à jour : {error}"))?,
+            );
         }
 
         securities
@@ -1335,29 +1543,65 @@ fn update_open_position_prices() -> Result<PriceUpdateSummary, String> {
 
     for security in securities {
         if security.ticker.trim().is_empty() {
+            let message = "Ticker absent, ancien cours conservé.".to_string();
+
+            upsert_price_update_status(
+                &connection,
+                &security.id,
+                "",
+                "",
+                "error",
+                security.old_price,
+                None,
+                Some(&message),
+            )?;
+
             skipped_count += 1;
             errors.push(PriceUpdateError {
                 security_id: security.id,
                 name: security.name,
                 ticker: security.ticker,
-                message: "Ticker absent, ancien cours conservé.".to_string(),
+                used_symbol: "".to_string(),
+                message,
             });
             continue;
         }
 
         match fetch_latest_price_with_source(&security.ticker) {
-            Ok(PriceQuote { price: new_price, source }) if new_price > 0.0 => {
-                if is_suspicious_price_jump(security.old_price, new_price) {
+            Ok(PriceQuote {
+                price: new_price,
+                source,
+                used_symbol,
+            }) if new_price > 0.0 => {
+                if is_suspicious_price_jump_for_asset(
+                    &security.asset_class,
+                    security.old_price,
+                    new_price,
+                ) {
+                    let message = format!(
+                        "Variation suspecte ignorée : ancien cours {old:.4}, nouveau cours {new:.4} via {source} ({used_symbol}). Ancien cours conservé.",
+                        old = security.old_price,
+                        new = new_price
+                    );
+
+                    upsert_price_update_status(
+                        &connection,
+                        &security.id,
+                        &source,
+                        &used_symbol,
+                        "kept",
+                        security.old_price,
+                        Some(new_price),
+                        Some(&message),
+                    )?;
+
                     skipped_count += 1;
                     errors.push(PriceUpdateError {
                         security_id: security.id,
                         name: security.name,
                         ticker: security.ticker,
-                        message: format!(
-                            "Variation suspecte ignorée : ancien cours {old:.4}, nouveau cours {new:.4}. Ancien cours conservé.",
-                            old = security.old_price,
-                            new = new_price
-                        ),
+                        used_symbol,
+                        message,
                     });
                     continue;
                 }
@@ -1373,9 +1617,11 @@ fn update_open_position_prices() -> Result<PriceUpdateSummary, String> {
                           close_price = excluded.close_price,
                           currency = excluded.currency
                         ",
-                        params![security.id, new_price, source],
+                        params![security.id, new_price, source.as_str()],
                     )
-                    .map_err(|error| format!("Erreur enregistrement cours {} : {error}", security.ticker))?;
+                    .map_err(|error| {
+                        format!("Erreur enregistrement cours {} : {error}", security.ticker)
+                    })?;
 
                 connection
                     .execute(
@@ -1387,39 +1633,89 @@ fn update_open_position_prices() -> Result<PriceUpdateSummary, String> {
                         ",
                         params![new_price, security.id],
                     )
-                    .map_err(|error| format!("Erreur mise à jour positions {} : {error}", security.ticker))?;
+                    .map_err(|error| {
+                        format!("Erreur mise à jour positions {} : {error}", security.ticker)
+                    })?;
+
+                upsert_price_update_status(
+                    &connection,
+                    &security.id,
+                    &source,
+                    &used_symbol,
+                    "updated",
+                    security.old_price,
+                    Some(new_price),
+                    None,
+                )?;
 
                 updated.push(PriceUpdateLine {
                     security_id: security.id,
                     name: security.name,
                     ticker: security.ticker,
+                    used_symbol,
                     old_price: security.old_price,
                     new_price,
+                    source,
                 });
             }
-            Ok(PriceQuote { price: new_price, source: _source }) => {
+            Ok(PriceQuote {
+                price: new_price,
+                source,
+                used_symbol,
+            }) => {
+                let message = format!("Cours invalide reçu ({new_price}) via {source} ({used_symbol}), ancien cours conservé.");
+
+                upsert_price_update_status(
+                    &connection,
+                    &security.id,
+                    &source,
+                    &used_symbol,
+                    "error",
+                    security.old_price,
+                    Some(new_price),
+                    Some(&message),
+                )?;
+
                 skipped_count += 1;
                 errors.push(PriceUpdateError {
                     security_id: security.id,
                     name: security.name,
                     ticker: security.ticker,
-                    message: format!("Cours invalide reçu ({new_price}), ancien cours conservé."),
+                    used_symbol,
+                    message,
                 });
             }
             Err(error) => {
+                let used_symbol = preferred_quote_symbol(&security.ticker);
+                let message = format!("{error}. Ancien cours conservé.");
+
+                upsert_price_update_status(
+                    &connection,
+                    &security.id,
+                    "",
+                    &used_symbol,
+                    "error",
+                    security.old_price,
+                    None,
+                    Some(&message),
+                )?;
+
                 skipped_count += 1;
                 errors.push(PriceUpdateError {
                     security_id: security.id,
                     name: security.name,
                     ticker: security.ticker,
-                    message: format!("{error}. Ancien cours conservé."),
+                    used_symbol,
+                    message,
                 });
             }
         }
     }
 
     let updated_at = connection
-        .query_row("SELECT datetime('now', 'localtime')", [], |row| row.get::<_, String>(0))
+        .query_row("SELECT datetime('now', 'localtime')", [], |row| {
+            row.get::<_, String>(0)
+        })
         .unwrap_or_else(|_| "maintenant".to_string());
 
     Ok(PriceUpdateSummary {
@@ -1478,7 +1774,11 @@ fn create_trade_transaction(input: NewTradeTransaction) -> Result<String, String
 
     match input.transaction_type.as_str() {
         "buy" => {
-            update_account_cash(&sqlite_transaction, &input.account_id, -(gross_amount + input.fees))?;
+            update_account_cash(
+                &sqlite_transaction,
+                &input.account_id,
+                -(gross_amount + input.fees),
+            )?;
 
             let existing_position = sqlite_transaction
                 .query_row(
@@ -1488,17 +1788,21 @@ fn create_trade_transaction(input: NewTradeTransaction) -> Result<String, String
                     WHERE account_id = ?1 AND security_id = ?2
                     ",
                     params![input.account_id, input.security_id],
-                    |row| Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, f64>(1)?,
-                        row.get::<_, f64>(2)?,
-                        row.get::<_, f64>(3)?,
-                    )),
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, f64>(1)?,
+                            row.get::<_, f64>(2)?,
+                            row.get::<_, f64>(3)?,
+                        ))
+                    },
                 )
                 .optional()
                 .map_err(|error| format!("Erreur recherche position : {error}"))?;
 
-            if let Some((position_id, old_quantity, old_average_price, old_current_price)) = existing_position {
+            if let Some((position_id, old_quantity, old_average_price, old_current_price)) =
+                existing_position
+            {
                 let old_cost = old_quantity * old_average_price;
                 let new_quantity = old_quantity + input.quantity;
                 let new_average_price = (old_cost + gross_amount + input.fees) / new_quantity;
@@ -1516,7 +1820,12 @@ fn create_trade_transaction(input: NewTradeTransaction) -> Result<String, String
                             updated_at = CURRENT_TIMESTAMP
                         WHERE id = ?4
                         ",
-                        params![new_quantity, new_average_price, old_current_price, position_id],
+                        params![
+                            new_quantity,
+                            new_average_price,
+                            old_current_price,
+                            position_id
+                        ],
                     )
                     .map_err(|error| format!("Erreur mise à jour position : {error}"))?;
             } else {
@@ -1536,7 +1845,14 @@ fn create_trade_transaction(input: NewTradeTransaction) -> Result<String, String
                         )
                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                         ",
-                        params![position_id, input.account_id, input.security_id, input.quantity, average_price, input.price],
+                        params![
+                            position_id,
+                            input.account_id,
+                            input.security_id,
+                            input.quantity,
+                            average_price,
+                            input.price
+                        ],
                     )
                     .map_err(|error| format!("Erreur création position : {error}"))?;
             }
@@ -1550,17 +1866,21 @@ fn create_trade_transaction(input: NewTradeTransaction) -> Result<String, String
                     WHERE account_id = ?1 AND security_id = ?2
                     ",
                     params![input.account_id, input.security_id],
-                    |row| Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, f64>(1)?,
-                        row.get::<_, f64>(2)?,
-                        row.get::<_, f64>(3)?,
-                    )),
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, f64>(1)?,
+                            row.get::<_, f64>(2)?,
+                            row.get::<_, f64>(3)?,
+                        ))
+                    },
                 )
                 .optional()
                 .map_err(|error| format!("Erreur recherche position : {error}"))?;
 
-            let Some((position_id, old_quantity, old_average_price, old_current_price)) = existing_position else {
+            let Some((position_id, old_quantity, old_average_price, old_current_price)) =
+                existing_position
+            else {
                 return Err("Impossible de vendre : aucune position existante pour cet actif dans ce compte.".to_string());
             };
 
@@ -1588,12 +1908,21 @@ fn create_trade_transaction(input: NewTradeTransaction) -> Result<String, String
                             updated_at = CURRENT_TIMESTAMP
                         WHERE id = ?4
                         ",
-                        params![new_quantity, old_average_price, old_current_price, position_id],
+                        params![
+                            new_quantity,
+                            old_average_price,
+                            old_current_price,
+                            position_id
+                        ],
                     )
                     .map_err(|error| format!("Erreur réduction position : {error}"))?;
             }
 
-            update_account_cash(&sqlite_transaction, &input.account_id, gross_amount - input.fees)?;
+            update_account_cash(
+                &sqlite_transaction,
+                &input.account_id,
+                gross_amount - input.fees,
+            )?;
         }
         _ => unreachable!(),
     }
@@ -1652,7 +1981,9 @@ fn create_cash_transaction(input: NewCashTransaction) -> Result<String, String> 
     let transaction_type = input.transaction_type.as_str();
 
     if !matches!(transaction_type, "deposit" | "withdrawal" | "transfer") {
-        return Err("Cette première version accepte uniquement dépôt, retrait et transfert.".to_string());
+        return Err(
+            "Cette première version accepte uniquement dépôt, retrait et transfert.".to_string(),
+        );
     }
 
     let mut connection = open_database()?;
@@ -1694,13 +2025,15 @@ fn create_cash_transaction(input: NewCashTransaction) -> Result<String, String> 
                 .from_account_id
                 .clone()
                 .ok_or_else(|| "Compte source obligatoire pour un transfert.".to_string())?;
-            let to_account_id = input
-                .to_account_id
-                .clone()
-                .ok_or_else(|| "Compte de destination obligatoire pour un transfert.".to_string())?;
+            let to_account_id = input.to_account_id.clone().ok_or_else(|| {
+                "Compte de destination obligatoire pour un transfert.".to_string()
+            })?;
 
             if from_account_id == to_account_id {
-                return Err("Le compte source et le compte de destination doivent être différents.".to_string());
+                return Err(
+                    "Le compte source et le compte de destination doivent être différents."
+                        .to_string(),
+                );
             }
 
             update_account_cash(&sqlite_transaction, &from_account_id, -input.amount)?;

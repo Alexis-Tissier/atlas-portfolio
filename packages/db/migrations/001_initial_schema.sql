@@ -135,6 +135,19 @@ CREATE TABLE IF NOT EXISTS recommendations (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+
+CREATE TABLE IF NOT EXISTS price_update_status (
+  security_id TEXT PRIMARY KEY,
+  attempted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  provider TEXT NOT NULL DEFAULT '',
+  used_symbol TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL,
+  old_price REAL NOT NULL DEFAULT 0,
+  new_price REAL,
+  message TEXT,
+  FOREIGN KEY (security_id) REFERENCES securities(id) ON DELETE CASCADE
+);
+
 CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
 CREATE INDEX IF NOT EXISTS idx_transactions_type ON transactions(type);
 CREATE INDEX IF NOT EXISTS idx_positions_account ON positions(account_id);

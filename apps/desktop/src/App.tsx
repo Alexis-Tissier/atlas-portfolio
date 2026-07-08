@@ -211,7 +211,7 @@ function App() {
         </header>
 
         {currentPage === "Positions" ? (
-          <PositionsPage positions={positionsPageRows} positionsError={positionsError} />
+          <PositionsPage positions={positionsPageRows} positionsError={positionsError} priceUpdateSummary={priceUpdateSummary} />
         ) : currentPage === "Transactions" ? (
           <TransactionsPage
             accounts={accounts}
@@ -472,14 +472,18 @@ function DashboardPage({
 function PositionsPage({
   positions,
   positionsError,
+  priceUpdateSummary,
 }: {
   positions: PositionPageRow[];
   positionsError: string | null;
+  priceUpdateSummary: PriceUpdateSummary | null;
 }) {
   const totalValue = positions.reduce((sum, position) => sum + position.value, 0);
   const totalCost = positions.reduce((sum, position) => sum + position.cost, 0);
   const totalPerformance = totalValue - totalCost;
   const suspiciousPositions = positions.filter((position) => position.price_warning);
+  const updatedBySecurityId = new Map((priceUpdateSummary?.updated ?? []).map((line) => [line.security_id, line]));
+  const errorBySecurityId = new Map((priceUpdateSummary?.errors ?? []).map((line) => [line.security_id, line]));
 
   return (
     <section className="page">
@@ -518,6 +522,10 @@ function PositionsPage({
               <th>Quantité</th>
               <th>PRU</th>
               <th>Cours</th>
+              <th>Source</th>
+              <th>Date prix</th>
+              <th>Symbole testé</th>
+              <th>Erreur prix</th>
               <th>Valeur</th>
               <th>Perf.</th>
               <th>Alerte</th>
@@ -533,6 +541,10 @@ function PositionsPage({
                 <td>{formatQuantity(position.quantity)}</td>
                 <td>{formatEuro(position.average_price)}</td>
                 <td>{formatEuro(position.current_price)}</td>
+                <td>{updatedBySecurityId.get(position.position_id)?.source ?? position.price_source ?? "manual"}</td>
+                <td>{position.price_date ?? "—"}</td>
+                <td>{updatedBySecurityId.get(position.position_id)?.used_symbol ?? errorBySecurityId.get(position.position_id)?.used_symbol ?? position.ticker}</td>
+                <td className="price-error-cell">{errorBySecurityId.get(position.position_id)?.message ?? "—"}</td>
                 <td className="amount-cell">{formatEuro(position.value)}</td>
                 <td className={position.performance_amount >= 0 ? "positive" : "negative"}>
                   {formatEuro(position.performance_amount)} ({formatSignedPercent(position.performance_percent)})

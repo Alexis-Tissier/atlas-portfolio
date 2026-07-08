@@ -104,12 +104,15 @@ export type PriceUpdateLine = {
   ticker: string;
   old_price: number;
   new_price: number;
+  source: string;
+  used_symbol: string;
 };
 
 export type PriceUpdateError = {
   security_id: string;
   name: string;
   ticker: string;
+  used_symbol: string;
   message: string;
 };
 
@@ -120,6 +123,24 @@ export type PriceUpdateSummary = {
   error_count: number;
   updated: PriceUpdateLine[];
   errors: PriceUpdateError[];
+};
+
+export type PositionPageRow = {
+  position_id: string;
+  account_name: string;
+  security_name: string;
+  ticker: string;
+  asset_class: string;
+  quantity: number;
+  average_price: number;
+  current_price: number;
+  value: number;
+  cost: number;
+  performance_amount: number;
+  performance_percent: number;
+  price_warning: string | null;
+  price_source: string | null;
+  price_date: string | null;
 };
 
 export type NewCashTransaction = {
@@ -168,6 +189,10 @@ export async function getTransactions() {
 
 export async function getSecurities() {
   return invoke<DbSecurity[]>("get_securities");
+}
+
+export async function getPositionsPage() {
+  return invoke<PositionPageRow[]>("get_positions_page");
 }
 
 export async function createCashTransaction(input: NewCashTransaction) {

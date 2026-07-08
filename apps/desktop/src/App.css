@@ -338,3 +338,38 @@ td:first-child { color: #374151; font-weight: 600; }
   line-height: 1.4;
   margin: 0;
 }
+
+
+.positions-summary-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.positions-table-card {
+  margin-top: 16px;
+}
+
+.position-row-warning td {
+  background: #fff8ed;
+}
+
+.warning-badge {
+  display: inline-flex;
+  border-radius: 999px;
+  background: #fff3d6;
+  color: #9a5b00;
+  font-size: 11px;
+  font-weight: 750;
+  padding: 5px 8px;
+}
+
+.negative {
+  color: #dc2626;
+  font-weight: 750;
+}
+
+
+.price-error-cell {
+  max-width: 360px;
+  white-space: normal;
+  color: #8a5a00;
+}
