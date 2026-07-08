@@ -181,9 +181,43 @@ fn open_database() -> Result<Connection, String> {
 }
 
 fn alpha_vantage_api_key() -> Result<String, String> {
-    env::var("ATLAS_ALPHA_VANTAGE_API_KEY").map_err(|_| {
-        "Clé Alpha Vantage manquante. Lance d'abord : export ATLAS_ALPHA_VANTAGE_API_KEY=\"ta_cle\"".to_string()
-    })
+    if let Ok(value) = env::var("ATLAS_ALPHA_VANTAGE_API_KEY") {
+        let trimmed = value.trim().to_string();
+        if !trimmed.is_empty() {
+            return Ok(trimmed);
+        }
+    }
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest_dir
+        .join("../../..")
+        .canonicalize()
+        .map_err(|error| format!("Impossible de trouver la racine du projet : {error}"))?;
+    let config_path = repo_root.join(".local").join("atlas-config.json");
+
+    if config_path.exists() {
+        let content = std::fs::read_to_string(&config_path)
+            .map_err(|error| format!("Impossible de lire {} : {error}", config_path.display()))?;
+        let json: Value = serde_json::from_str(&content)
+            .map_err(|error| format!("Configuration Alpha Vantage invalide : {error}"))?;
+
+        let key = json
+            .get("alpha_vantage_api_key")
+            .or_else(|| json.get("alphaVantageApiKey"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+
+        if !key.is_empty() {
+            return Ok(key);
+        }
+    }
+
+    Err(
+        "Clé Alpha Vantage manquante. Mets-la dans .local/atlas-config.json avec { \"alpha_vantage_api_key\": \"ta_cle\" } ou lance export ATLAS_ALPHA_VANTAGE_API_KEY=\"ta_cle\"."
+            .to_string(),
+    )
 }
 
 fn alpha_vantage_request(parameters: &[(&str, String)]) -> Result<Value, String> {
@@ -1326,6 +1360,8 @@ pub fn run() {
             get_transactions,
             get_securities,
             create_security,
+            search_online_assets,
+            create_security_from_online_result,
             create_cash_transaction,
             create_trade_transaction
         ])

@@ -42,3 +42,18 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# Temporary patch artifacts
+atlas_*_step*/
+README_STEP*.md
+scripts/apply-step*.py
+scripts/repair-dev-current-prices.sh
+
+# Local Atlas runtime config
+.local/
+
+# Temporary patch artifacts
+atlas_*_step*/
+README_STEP*.md
+scripts/apply-step*.py
+scripts/repair-dev-current-prices.sh

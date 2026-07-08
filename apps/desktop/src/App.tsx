@@ -4,7 +4,7 @@ import { attentionPoints, monthlyContribution } from "./mocks/mockPortfolio";
 import { formatEuro, getAllocationRows, getPositionRows, getPortfolioSummary } from "./core/portfolioCalculations";
 import {
   createCashTransaction,
-  createSecurity,
+  createSecurityFromOnlineResult,
   createTradeTransaction,
   getDashboardData,
   getSecurities,
@@ -14,8 +14,8 @@ import {
   type DbSecurity,
   type DbTransaction,
   type NewCashTransaction,
-  type NewSecurityInput,
   type NewTradeTransaction,
+  type OnlineAssetSearchResult,
 } from "./lib/tauriApi";
 
 const nav = [
@@ -510,7 +510,6 @@ function TransactionForm({
   const today = new Date().toISOString().slice(0, 10);
   const firstAccountId = accounts[0]?.id ?? "";
   const secondAccountId = accounts[1]?.id ?? firstAccountId;
-  const firstSecurityId = securities[0]?.id ?? "";
 
   const [availableSecurities, setAvailableSecurities] = useState<DbSecurity[]>(securities);
   const [transactionType, setTransactionType] = useState<TransactionFormType>("deposit");
@@ -518,40 +517,33 @@ function TransactionForm({
   const [fromAccountId, setFromAccountId] = useState(firstAccountId);
   const [toAccountId, setToAccountId] = useState(secondAccountId);
   const [accountId, setAccountId] = useState(secondAccountId);
-  const [securityId, setSecurityId] = useState(firstSecurityId);
-  const [assetSearch, setAssetSearch] = useState("");
-  const [amount, setAmount] = useState("100");
+  const [securityId, setSecurityId] = useState("");
+  const [assetQuery, setAssetQuery] = useState("");
+  const [onlineAssetResults, setOnlineAssetResults] = useState<OnlineAssetSearchResult[]>([]);
+  const [onlineSearchError, setOnlineSearchError] = useState<string | null>(null);
+  const [isSearchingOnline, setIsSearchingOnline] = useState(false);
+  const [isCreatingAsset, setIsCreatingAsset] = useState(false);
+  const [amount, setAmount] = useState("");
+  const [quantity, setQuantity] = useState("1");
+  const [price, setPrice] = useState("");
   const [fees, setFees] = useState("0");
   const [note, setNote] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const [isCreateAssetOpen, setIsCreateAssetOpen] = useState(false);
-  const [newSecurityName, setNewSecurityName] = useState("");
-  const [newSecurityTicker, setNewSecurityTicker] = useState("");
-  const [newSecurityClass, setNewSecurityClass] = useState<NewSecurityInput["asset_class"]>("Actions");
-  const [newSecurityCurrency, setNewSecurityCurrency] = useState("EUR");
-  const [newSecurityPrice, setNewSecurityPrice] = useState("");
-  const [assetCreateError, setAssetCreateError] = useState<string | null>(null);
-  const [isCreatingSecurity, setIsCreatingSecurity] = useState(false);
-
   const isTrade = transactionType === "buy" || transactionType === "sell";
   const selectedSecurity = availableSecurities.find((security) => security.id === securityId);
-  const normalizedAssetSearch = assetSearch.trim().toLowerCase();
+  const normalizedAssetSearch = assetQuery.trim().toLowerCase();
 
-  const filteredSecurities = availableSecurities
-    .filter((security) => {
-      if (!normalizedAssetSearch) {
-        return true;
-      }
-
-      return (
-        security.name.toLowerCase().includes(normalizedAssetSearch) ||
-        security.ticker.toLowerCase().includes(normalizedAssetSearch) ||
-        security.asset_class.toLowerCase().includes(normalizedAssetSearch)
-      );
-    })
-    .slice(0, 8);
+  const filteredSecurities = normalizedAssetSearch
+    ? availableSecurities
+        .filter((security) => (
+          security.name.toLowerCase().includes(normalizedAssetSearch) ||
+          security.ticker.toLowerCase().includes(normalizedAssetSearch) ||
+          security.asset_class.toLowerCase().includes(normalizedAssetSearch)
+        ))
+        .slice(0, 8)
+    : [];
 
   useEffect(() => {
     setAvailableSecurities(securities);
@@ -569,63 +561,62 @@ function TransactionForm({
     if (!accountId && secondAccountId) {
       setAccountId(secondAccountId);
     }
+  }, [accountId, firstAccountId, fromAccountId, secondAccountId, toAccountId]);
 
-    if (!securityId && firstSecurityId) {
-      setSecurityId(firstSecurityId);
+  function selectSecurity(security: DbSecurity) {
+    setSecurityId(security.id);
+    setAssetQuery(`${security.name} · ${security.ticker}`);
+    setOnlineAssetResults([]);
+    setOnlineSearchError(null);
+
+    const currentPrice = formatInputDecimal(security.current_price);
+    setPrice(currentPrice);
+    setQuantity("1");
+    setAmount(currentPrice);
+  }
+
+  function handleTradeFieldChange(field: "amount" | "quantity" | "price", value: string) {
+    const currentAmount = field === "amount" ? value : amount;
+    const currentQuantity = field === "quantity" ? value : quantity;
+    const currentPrice = field === "price" ? value : price;
+
+    if (field === "amount") {
+      setAmount(value);
+      const parsedAmount = parseDecimal(value);
+      const parsedPrice = parseDecimal(currentPrice);
+      const parsedQuantity = parseDecimal(currentQuantity);
+
+      if (isPositiveNumber(parsedAmount) && isPositiveNumber(parsedPrice)) {
+        setQuantity(formatInputDecimal(parsedAmount / parsedPrice));
+      } else if (isPositiveNumber(parsedAmount) && isPositiveNumber(parsedQuantity)) {
+        setPrice(formatInputDecimal(parsedAmount / parsedQuantity));
+      }
     }
-  }, [accountId, firstAccountId, firstSecurityId, fromAccountId, secondAccountId, securityId, toAccountId]);
 
-  useEffect(() => {
-    if (selectedSecurity && !assetSearch) {
-      setAssetSearch(`${selectedSecurity.name} · ${selectedSecurity.ticker}`);
-    }
-  }, [assetSearch, selectedSecurity]);
+    if (field === "quantity") {
+      setQuantity(value);
+      const parsedQuantity = parseDecimal(value);
+      const parsedPrice = parseDecimal(currentPrice);
+      const parsedAmount = parseDecimal(currentAmount);
 
-  async function handleCreateSecurity() {
-    setAssetCreateError(null);
-
-    const parsedPrice = parseDecimal(newSecurityPrice);
-
-    if (!newSecurityName.trim()) {
-      setAssetCreateError("Renseigne le nom de l’actif.");
-      return;
+      if (isPositiveNumber(parsedQuantity) && isPositiveNumber(parsedPrice)) {
+        setAmount(formatInputDecimal(parsedQuantity * parsedPrice));
+      } else if (isPositiveNumber(parsedQuantity) && isPositiveNumber(parsedAmount)) {
+        setPrice(formatInputDecimal(parsedAmount / parsedQuantity));
+      }
     }
 
-    if (!newSecurityTicker.trim()) {
-      setAssetCreateError("Renseigne le ticker ou symbole.");
-      return;
-    }
+    if (field === "price") {
+      setPrice(value);
+      const parsedPrice = parseDecimal(value);
+      const parsedQuantity = parseDecimal(currentQuantity);
+      const parsedAmount = parseDecimal(currentAmount);
 
-    if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) {
-      setAssetCreateError("Renseigne un cours manuel supérieur à 0.");
-      return;
-    }
-
-    const payload: NewSecurityInput = {
-      name: newSecurityName.trim(),
-      ticker: newSecurityTicker.trim().toUpperCase(),
-      asset_class: newSecurityClass,
-      currency: newSecurityCurrency.trim().toUpperCase() || "EUR",
-      current_price: parsedPrice,
-    };
-
-    setIsCreatingSecurity(true);
-
-    try {
-      const created = await createSecurity(payload);
-      setAvailableSecurities((current) => [...current, created].sort((a, b) => a.name.localeCompare(b.name)));
-      setSecurityId(created.id);
-      setAssetSearch(`${created.name} · ${created.ticker}`);
-      setNewSecurityName("");
-      setNewSecurityTicker("");
-      setNewSecurityClass("Actions");
-      setNewSecurityCurrency("EUR");
-      setNewSecurityPrice("");
-      setIsCreateAssetOpen(false);
-    } catch (error) {
-      setAssetCreateError(String(error));
-    } finally {
-      setIsCreatingSecurity(false);
+      if (isPositiveNumber(parsedPrice) && isPositiveNumber(parsedQuantity)) {
+        setAmount(formatInputDecimal(parsedPrice * parsedQuantity));
+      } else if (isPositiveNumber(parsedPrice) && isPositiveNumber(parsedAmount)) {
+        setQuantity(formatInputDecimal(parsedAmount / parsedPrice));
+      }
     }
   }
 
@@ -668,10 +659,11 @@ function TransactionForm({
         region: result.region || null,
       });
 
-      setCreatedSecurity(created);
-      setSecurityId(created.id);
-      setAssetQuery(`${created.name} · ${created.ticker}`);
-      setOnlineAssetResults([]);
+      setAvailableSecurities((current) => {
+        const withoutDuplicate = current.filter((security) => security.id !== created.id);
+        return [...withoutDuplicate, created].sort((a, b) => a.name.localeCompare(b.name));
+      });
+      selectSecurity(created);
     } catch (error) {
       setOnlineSearchError(String(error));
     } finally {
@@ -687,8 +679,9 @@ function TransactionForm({
     if (isTrade) {
       const tradeTransactionType = transactionType as "buy" | "sell";
       const parsedAmount = parseDecimal(amount);
+      const parsedQuantity = parseDecimal(quantity);
+      const parsedPrice = parseDecimal(price);
       const parsedFees = parseDecimal(fees || "0");
-      const currentPrice = selectedSecurity?.current_price ?? 0;
 
       if (!accountId) {
         setFormError("Choisis un compte.");
@@ -696,17 +689,23 @@ function TransactionForm({
       }
 
       if (!securityId || !selectedSecurity) {
-        setFormError("Choisis un actif ou crée-en un nouveau.");
+        setFormError("Choisis un actif ou cherche-le en ligne.");
         return;
       }
 
-      if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
-        setFormError("Le montant de l’ordre doit être un nombre supérieur à 0.");
-        return;
+      let finalQuantity = parsedQuantity;
+      let finalPrice = parsedPrice;
+
+      if (!isPositiveNumber(finalQuantity) && isPositiveNumber(parsedAmount) && isPositiveNumber(parsedPrice)) {
+        finalQuantity = parsedAmount / parsedPrice;
       }
 
-      if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
-        setFormError("L’actif sélectionné n’a pas encore de cours connu. Crée un actif avec un cours manuel ou attends la recherche de cours automatique.");
+      if (!isPositiveNumber(finalPrice) && isPositiveNumber(parsedAmount) && isPositiveNumber(parsedQuantity)) {
+        finalPrice = parsedAmount / parsedQuantity;
+      }
+
+      if (!isPositiveNumber(finalQuantity) || !isPositiveNumber(finalPrice)) {
+        setFormError("Renseigne au moins deux valeurs cohérentes entre montant, quantité et cours.");
         return;
       }
 
@@ -715,15 +714,13 @@ function TransactionForm({
         return;
       }
 
-      const computedQuantity = parsedAmount / currentPrice;
-
       const payload: NewTradeTransaction = {
         transaction_type: tradeTransactionType,
         date,
         account_id: accountId,
         security_id: securityId,
-        quantity: computedQuantity,
-        price: currentPrice,
+        quantity: finalQuantity,
+        price: finalPrice,
         fees: parsedFees,
         note: note.trim() ? note.trim() : null,
       };
@@ -733,7 +730,9 @@ function TransactionForm({
       try {
         await createTradeTransaction(payload);
         await onCreated();
-        setAmount("100");
+        setAmount("");
+        setQuantity("1");
+        setPrice(selectedSecurity ? formatInputDecimal(selectedSecurity.current_price) : "");
         setFees("0");
         setNote("");
       } catch (error) {
@@ -787,7 +786,7 @@ function TransactionForm({
     try {
       await createCashTransaction(payload);
       await onCreated();
-      setAmount("100");
+      setAmount("");
       setNote("");
     } catch (error) {
       setFormError(String(error));
@@ -801,7 +800,7 @@ function TransactionForm({
       <div className="transactions-header">
         <div>
           <h2>Ajouter une transaction</h2>
-          <p>Dépôt, retrait, transfert, achat et vente. Pour les achats/ventes, saisis le montant total de l’ordre.</p>
+          <p>Dépôt, retrait, transfert, achat et vente. Pour les achats/ventes, montant, quantité et cours restent modifiables.</p>
         </div>
         <span className="status-pill connected">Écriture SQLite</span>
       </div>
@@ -834,107 +833,37 @@ function TransactionForm({
               </select>
             </label>
 
-            <label className="asset-search-field">
-              Actif
-              <input
-                value={assetSearch}
-                onChange={(event) => {
-                  setAssetSearch(event.target.value);
-                  setIsCreateAssetOpen(false);
-                }}
-                placeholder="Rechercher LVMH, MC.PA, CW8, Bitcoin..."
-              />
+            <AssetPicker
+              assetQuery={assetQuery}
+              filteredSecurities={filteredSecurities}
+              isCreatingAsset={isCreatingAsset}
+              isSearchingOnline={isSearchingOnline}
+              onAssetQueryChange={(value) => {
+                setAssetQuery(value);
+                setOnlineSearchError(null);
+                setOnlineAssetResults([]);
+              }}
+              onCreateAssetFromOnlineResult={handleCreateAssetFromOnlineResult}
+              onSearchOnlineAssets={handleSearchOnlineAssets}
+              onSelectSecurity={selectSecurity}
+              onlineAssetResults={onlineAssetResults}
+              onlineSearchError={onlineSearchError}
+              selectedSecurityId={securityId}
+            />
+
+            <label>
+              Cours unitaire
+              <input inputMode="decimal" value={price} onChange={(event) => handleTradeFieldChange("price", event.target.value)} placeholder="Cours" />
             </label>
 
-            <div className="asset-picker">
-              {filteredSecurities.map((security) => (
-                <button
-                  className={security.id === securityId ? "asset-option selected" : "asset-option"}
-                  key={security.id}
-                  type="button"
-                  onClick={() => {
-                    setSecurityId(security.id);
-                    setAssetSearch(`${security.name} · ${security.ticker}`);
-                    setIsCreateAssetOpen(false);
-                  }}
-                >
-                  <strong>{security.name}</strong>
-                  <span>{security.ticker} · {security.asset_class} · {formatEuro(security.current_price)}</span>
-                </button>
-              ))}
-
-              {normalizedAssetSearch && filteredSecurities.length === 0 ? (
-                <p className="empty-asset-result">Aucun actif local trouvé.</p>
-              ) : null}
-
-              {normalizedAssetSearch ? (
-                <button className="create-asset-toggle" type="button" onClick={() => setIsCreateAssetOpen((value) => !value)}>
-                  + Créer “{assetSearch.trim()}”
-                </button>
-              ) : null}
-            </div>
-
-            {isCreateAssetOpen ? (
-              <div className="create-asset-panel">
-                <div className="create-asset-header">
-                  <strong>Créer un nouvel actif local</strong>
-                  <span>Recherche internet et cours automatique à l’étape suivante.</span>
-                </div>
-
-                <label>
-                  Nom
-                  <input value={newSecurityName} onChange={(event) => setNewSecurityName(event.target.value)} placeholder="Ex : LVMH" />
-                </label>
-
-                <label>
-                  Ticker
-                  <input value={newSecurityTicker} onChange={(event) => setNewSecurityTicker(event.target.value)} placeholder="Ex : MC.PA" />
-                </label>
-
-                <label>
-                  Classe
-                  <select value={newSecurityClass} onChange={(event) => setNewSecurityClass(event.target.value as NewSecurityInput["asset_class"])}>
-                    <option value="Actions">Actions</option>
-                    <option value="ETF">ETF</option>
-                    <option value="Crypto">Crypto</option>
-                    <option value="Cash">Cash</option>
-                  </select>
-                </label>
-
-                <label>
-                  Devise
-                  <input value={newSecurityCurrency} onChange={(event) => setNewSecurityCurrency(event.target.value)} placeholder="EUR" />
-                </label>
-
-                <label>
-                  Cours manuel
-                  <input inputMode="decimal" value={newSecurityPrice} onChange={(event) => setNewSecurityPrice(event.target.value)} placeholder="Ex : 720" />
-                </label>
-
-                {assetCreateError ? <p className="form-error">{assetCreateError}</p> : null}
-
-                <div className="create-asset-actions">
-                  <button className="secondary-action" type="button" onClick={() => setIsCreateAssetOpen(false)}>Annuler</button>
-                  <button className="primary-action" type="button" onClick={handleCreateSecurity} disabled={isCreatingSecurity}>
-                    {isCreatingSecurity ? "Création..." : "Créer l’actif"}
-                  </button>
-                </div>
-              </div>
-            ) : null}
+            <label>
+              Quantité
+              <input inputMode="decimal" value={quantity} onChange={(event) => handleTradeFieldChange("quantity", event.target.value)} placeholder="1" />
+            </label>
 
             <label>
               Montant de l’ordre
-              <input inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="1000" />
-            </label>
-
-            <label>
-              Cours utilisé
-              <input value={selectedSecurity ? formatEuro(selectedSecurity.current_price) : "—"} readOnly />
-            </label>
-
-            <label>
-              Quantité estimée
-              <input value={selectedSecurity?.current_price ? formatQuantity(parseDecimal(amount) / selectedSecurity.current_price) : "—"} readOnly />
+              <input inputMode="decimal" value={amount} onChange={(event) => handleTradeFieldChange("amount", event.target.value)} placeholder="Montant" />
             </label>
 
             <label>
@@ -982,7 +911,7 @@ function TransactionForm({
 
         <div className="form-actions">
           <button className="secondary-action" type="button" onClick={onCancel}>Annuler</button>
-          <button className="primary-action" type="submit" disabled={isSubmitting || accounts.length === 0 || (isTrade && availableSecurities.length === 0)}>
+          <button className="primary-action" type="submit" disabled={isSubmitting || accounts.length === 0 || (isTrade && !securityId)}>
             {isSubmitting ? "Ajout..." : "Ajouter"}
           </button>
         </div>
@@ -1178,6 +1107,18 @@ function colorForBucket(bucket: string) {
 
 function parseDecimal(value: string) {
   return Number(value.replace(",", "."));
+}
+
+function isPositiveNumber(value: number) {
+  return Number.isFinite(value) && value > 0;
+}
+
+function formatInputDecimal(value: number) {
+  if (!Number.isFinite(value)) {
+    return "";
+  }
+
+  return Number(value.toFixed(8)).toString();
 }
 
 function formatSignedPercent(value: number) {
