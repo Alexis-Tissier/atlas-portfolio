@@ -1,21 +1,8 @@
 import { useEffect, useState } from "react";
 import "./App.css";
-import {
-  attentionPoints,
-  monthlyContribution,
-} from "./mocks/mockPortfolio";
-import {
-  formatEuro,
-  getAllocationRows,
-  getPositionRows,
-  getPortfolioSummary,
-} from "./core/portfolioCalculations";
-import {
-  getAccounts,
-  getPortfolioOverview,
-  type DbAccount,
-  type PortfolioOverviewRow,
-} from "./lib/tauriApi";
+import { attentionPoints, monthlyContribution } from "./mocks/mockPortfolio";
+import { formatEuro, getAllocationRows, getPositionRows, getPortfolioSummary } from "./core/portfolioCalculations";
+import { getDashboardData, type DashboardData } from "./lib/tauriApi";
 
 const nav = [
   "Portefeuille",
@@ -29,59 +16,56 @@ const nav = [
   "Journal",
 ];
 
-type DatabaseState = {
-  status: "loading" | "ready" | "error";
-  accounts: DbAccount[];
-  overview: PortfolioOverviewRow[];
-  error?: string;
-};
-
 function App() {
-  const summary = getPortfolioSummary();
-  const positionRows = getPositionRows();
-  const allocationRows = getAllocationRows();
-
-  const [databaseState, setDatabaseState] = useState<DatabaseState>({
-    status: "loading",
-    accounts: [],
-    overview: [],
-  });
+  const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
+  const [databaseError, setDatabaseError] = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function loadDatabasePreview() {
-      try {
-        const [accounts, overview] = await Promise.all([
-          getAccounts(),
-          getPortfolioOverview(),
-        ]);
-
-        if (!cancelled) {
-          setDatabaseState({
-            status: "ready",
-            accounts,
-            overview,
-          });
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setDatabaseState({
-            status: "error",
-            accounts: [],
-            overview: [],
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
-    }
-
-    loadDatabasePreview();
-
-    return () => {
-      cancelled = true;
-    };
+    getDashboardData()
+      .then((data) => {
+        setDashboardData(data);
+        setDatabaseError(null);
+      })
+      .catch((error) => {
+        console.error(error);
+        setDatabaseError(String(error));
+      });
   }, []);
+
+  const mockSummary = getPortfolioSummary();
+  const mockPositionRows = getPositionRows();
+  const mockAllocationRows = getAllocationRows();
+
+  const summary = dashboardData?.summary ?? {
+    total: mockSummary.total,
+    performance_amount: mockSummary.performanceAmount,
+    performance_percent: mockSummary.performancePercent,
+    start_date: mockSummary.startDate,
+  };
+
+  const positionRows = dashboardData
+    ? dashboardData.positions.map((position) => ({
+        asset: position.asset,
+        category: position.category,
+        account: position.account,
+        quantity: formatQuantity(position.quantity),
+        value: formatEuro(position.value),
+        weight: formatUnsignedPercent(position.weight),
+        performance: formatSignedPercent(position.performance_percent),
+      }))
+    : mockPositionRows;
+
+  const allocationRows = dashboardData
+    ? dashboardData.allocation.map((row) => ({
+        bucket: row.bucket,
+        targetPercent: row.target_percent,
+        actualPercent: row.actual_percent,
+        differencePercent: row.difference_percent,
+        value: row.value,
+      }))
+    : mockAllocationRows;
+
+  const accounts = dashboardData?.accounts ?? [];
 
   return (
     <div className="app-shell">
@@ -100,10 +84,10 @@ function App() {
         <button className="nav-link">Paramètres</button>
 
         <div className="local-data">
-          <span className="green-dot" />
+          <span className={dashboardData ? "green-dot" : "warning-dot"} />
           <div>
-            <strong>Données locales</strong>
-            <p>SQLite local · données fictives</p>
+            <strong>{dashboardData ? "SQLite connecté" : "Données locales"}</strong>
+            <p>{dashboardData ? "Base locale active" : "Mode fallback mock"}</p>
           </div>
         </div>
       </aside>
@@ -137,10 +121,9 @@ function App() {
                   <p className="label">Patrimoine total</p>
                   <p className="big-number">{formatEuro(summary.total)}</p>
                   <p className="positive">
-                    {formatEuro(summary.performanceAmount)} (+{summary.performancePercent.toFixed(2).replace(".", ",")} %){" "}
-                    <span>depuis le début</span>
+                    {formatEuro(summary.performance_amount)} ({formatSignedPercent(summary.performance_percent)}) <span>depuis le début</span>
                   </p>
-                  <p className="muted">Depuis le {summary.startDate}</p>
+                  <p className="muted">Depuis le {summary.start_date}</p>
                 </div>
 
                 <button className="select-button">Depuis le début⌄</button>
@@ -259,7 +242,28 @@ function App() {
                 <p className="small-note">Votre allocation évolue avec le temps et vos apports.</p>
               </article>
 
-              <SQLiteStatusCard state={databaseState} />
+              <article className="card sqlite-status-card">
+                <div className="status-header">
+                  <h2>Base SQLite locale</h2>
+                  <span className={dashboardData ? "status-pill connected" : "status-pill warning"}>
+                    {dashboardData ? "Connectée" : "Fallback"}
+                  </span>
+                </div>
+
+                {databaseError ? <p className="error-text">{databaseError}</p> : null}
+
+                <div className="accounts-list">
+                  {accounts.map((account) => (
+                    <div className="account-line" key={account.id}>
+                      <div>
+                        <strong>{account.name}</strong>
+                        <span>{account.account_type}</span>
+                      </div>
+                      <p>{formatEuro(account.total_value)}</p>
+                    </div>
+                  ))}
+                </div>
+              </article>
 
               <article className="card contribution-card">
                 <h2>✧ Prochain apport</h2>
@@ -292,51 +296,6 @@ function App() {
         </section>
       </main>
     </div>
-  );
-}
-
-function SQLiteStatusCard({ state }: { state: DatabaseState }) {
-  if (state.status === "loading") {
-    return (
-      <article className="card db-card">
-        <h2>Base SQLite locale</h2>
-        <p className="db-status loading">Connexion en cours...</p>
-      </article>
-    );
-  }
-
-  if (state.status === "error") {
-    return (
-      <article className="card db-card">
-        <h2>Base SQLite locale</h2>
-        <p className="db-status error">Erreur de connexion</p>
-        <p className="db-error">{state.error}</p>
-      </article>
-    );
-  }
-
-  const total = state.overview.reduce((sum, row) => sum + row.value, 0);
-  const visibleAccounts = state.accounts.filter((account) => account.include_in_net_worth);
-
-  return (
-    <article className="card db-card">
-      <div className="db-card-header">
-        <h2>Base SQLite locale</h2>
-        <span>Connectée</span>
-      </div>
-
-      <p className="db-total">{formatEuro(total)}</p>
-      <p className="muted">{visibleAccounts.length} comptes lus depuis SQLite.</p>
-
-      <div className="db-account-list">
-        {visibleAccounts.map((account) => (
-          <div className="db-account-row" key={account.id}>
-            <span>{account.name}</span>
-            <strong>{formatEuro(account.cash_balance)}</strong>
-          </div>
-        ))}
-      </div>
-    </article>
   );
 }
 
@@ -405,6 +364,19 @@ function colorForBucket(bucket: string) {
   };
 
   return colors[bucket] ?? "#d1d5db";
+}
+
+function formatQuantity(value: number) {
+  return new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 4 }).format(value);
+}
+
+function formatUnsignedPercent(value: number) {
+  return `${value.toFixed(1).replace(".", ",")} %`;
+}
+
+function formatSignedPercent(value: number) {
+  const sign = value >= 0 ? "+" : "";
+  return `${sign}${value.toFixed(2).replace(".", ",")} %`;
 }
 
 export default App;
