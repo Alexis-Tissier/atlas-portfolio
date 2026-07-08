@@ -1,0 +1,8 @@
+date,type,from_account,to_account,account,ticker,quantity,price,fees,amount,note
+2024-01-12,deposit,,Compte courant,,, , ,0,12000,Apport initial fictif
+2024-01-15,transfer,Compte courant,PEA,,,,0,5000,Transfert compte courant vers PEA
+2024-01-16,buy,,,PEA,CW8.PA,60,57.53,2,3453.8,Achat ETF Monde fictif
+2024-02-10,transfer,Compte courant,Livret A,,,,0,2000,Mise de sécurité Livret A
+2024-04-03,buy,,,PEA,MC.PA,4,391.51,2,1568.04,Achat LVMH fictif
+2024-05-20,dividend,,,PEA,MC.PA,,,0,68.4,Dividende fictif
+2024-07-05,buy,,,Compte crypto,BTC-EUR,0.1,11958.8,1.5,1197.38,Achat BTC fictif
