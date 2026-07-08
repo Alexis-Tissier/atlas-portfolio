@@ -40,6 +40,22 @@ const nav = [
 type TransactionFormType = "deposit" | "withdrawal" | "transfer" | "buy" | "sell";
 type CashTransactionType = "deposit" | "withdrawal" | "transfer";
 
+type AllocationDisplayRow = {
+  bucket: string;
+  targetPercent: number;
+  actualPercent?: number;
+  differencePercent?: number;
+  value?: number;
+};
+
+type CsvImportCandidate = {
+  row: Record<string, string>;
+  status: "valid" | "error";
+  message: string;
+  payload?: NewCashTransaction | NewTradeTransaction;
+};
+
+
 function App() {
   const [currentPage, setCurrentPage] = useState("Portefeuille");
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
@@ -52,6 +68,7 @@ function App() {
   const [priceUpdateSummary, setPriceUpdateSummary] = useState<PriceUpdateSummary | null>(null);
   const [priceUpdateError, setPriceUpdateError] = useState<string | null>(null);
   const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
+  const [isPrivacyMode, setIsPrivacyMode] = useState(false);
 
   async function refreshData() {
     try {
@@ -150,7 +167,7 @@ function App() {
         category: position.category,
         account: position.account,
         quantity: formatQuantity(position.quantity),
-        value: formatEuro(position.value),
+        value: displayEuro(position.value, isPrivacyMode),
         weight: formatUnsignedPercent(position.weight),
         performance: formatSignedPercent(position.performance_percent),
       }))
@@ -186,7 +203,12 @@ function App() {
 
         <div className="sidebar-divider" />
 
-        <button className="nav-link">Importer / Exporter</button>
+        <button
+          className={currentPage === "Importer / Exporter" ? "nav-link active" : "nav-link"}
+          onClick={() => setCurrentPage("Importer / Exporter")}
+        >
+          Importer / Exporter
+        </button>
         <button className="nav-link">Paramètres</button>
 
         <div className="local-data">
@@ -209,20 +231,36 @@ function App() {
           <div className="top-right">
             <div className="search">⌕ Rechercher...</div>
             <button>☼</button>
-            <button>♢</button>
+            <button
+              className={isPrivacyMode ? "privacy-toggle active" : "privacy-toggle"}
+              onClick={() => setIsPrivacyMode((value) => !value)}
+              title={isPrivacyMode ? "Afficher les montants" : "Masquer les montants"}
+              type="button"
+            >
+              {isPrivacyMode ? "•••" : "♢"}
+            </button>
             <div className="avatar">AP</div>
           </div>
         </header>
 
         {currentPage === "Positions" ? (
-          <PositionsPage positions={positionsPageRows} positionsError={positionsError} priceUpdateSummary={priceUpdateSummary} />
+          <PositionsPage positions={positionsPageRows} positionsError={positionsError} priceUpdateSummary={priceUpdateSummary} isPrivacyMode={isPrivacyMode} />
         ) : currentPage === "Transactions" ? (
           <TransactionsPage
             accounts={accounts}
+            isPrivacyMode={isPrivacyMode}
             onTransactionCreated={refreshData}
             securities={securities}
             transactions={transactions}
             transactionsError={transactionsError}
+          />
+        ) : currentPage === "Importer / Exporter" ? (
+          <ImportExportPage
+            accounts={accounts}
+            onImported={refreshData}
+            positions={positionsPageRows}
+            securities={securities}
+            transactions={transactions}
           />
         ) : currentPage === "Portefeuille" ? (
           <DashboardPage
@@ -230,6 +268,7 @@ function App() {
             allocationRows={allocationRows}
             databaseError={databaseError}
             dashboardData={dashboardData}
+            isPrivacyMode={isPrivacyMode}
             positionRows={positionRows}
             summary={summary}
             snapshots={chartSnapshots}
@@ -251,6 +290,7 @@ function DashboardPage({
   allocationRows,
   databaseError,
   dashboardData,
+  isPrivacyMode,
   isUpdatingPrices,
   onPriceRefresh,
   positionRows,
@@ -260,9 +300,10 @@ function DashboardPage({
   snapshots,
 }: {
   accounts: DashboardData["accounts"];
-  allocationRows: { bucket: string; targetPercent: number; actualPercent?: number; differencePercent?: number; value?: number }[];
+  allocationRows: AllocationDisplayRow[];
   databaseError: string | null;
   dashboardData: DashboardData | null;
+  isPrivacyMode: boolean;
   isUpdatingPrices: boolean;
   onPriceRefresh: () => void;
   positionRows: { asset: string; category: string; account: string; quantity: string; value: string; weight: string; performance: string }[];
@@ -271,6 +312,14 @@ function DashboardPage({
   summary: { total: number; performance_amount: number; performance_percent: number; start_date: string };
   snapshots: DashboardData["snapshots"];
 }) {
+  const actualAllocationRows = allocationRows.map((row) => ({
+    ...row,
+    actualPercent: row.actualPercent ?? 0,
+    value: row.value ?? 0,
+  }));
+
+  const allocationDonutBackground = buildAllocationDonut(actualAllocationRows);
+
   return (
     <section className="page">
       <div className="title-block">
@@ -283,9 +332,9 @@ function DashboardPage({
           <article className="card total-card">
             <div>
               <p className="label">Patrimoine total</p>
-              <p className="big-number">{formatEuro(summary.total)}</p>
+              <p className="big-number">{displayEuro(summary.total, isPrivacyMode)}</p>
               <p className="positive">
-                {formatEuro(summary.performance_amount)} ({formatSignedPercent(summary.performance_percent)}) <span>depuis le début</span>
+                {displayEuro(summary.performance_amount, isPrivacyMode)} ({formatSignedPercent(summary.performance_percent)}) <span>depuis le début</span>
               </p>
               <p className="muted">Depuis le {summary.start_date}</p>
             </div>
@@ -318,7 +367,7 @@ function DashboardPage({
               </div>
             </div>
 
-            <PortfolioChart snapshots={snapshots} currentTotal={summary.total} />
+            <PortfolioChart snapshots={snapshots} currentTotal={summary.total} isPrivacyMode={isPrivacyMode} />
           </article>
 
           <article className="card milestones-card">
@@ -326,9 +375,9 @@ function DashboardPage({
             <p>Votre stratégie évolue avec la taille de votre patrimoine.</p>
 
             <div className="milestones">
-              <Milestone color="green" icon="↗" amount="5 000 €" title="Construction" badge="Épargne régulière" text="Priorité à la constitution d’un socle diversifié et automatisé." />
-              <Milestone color="purple" icon="△" amount="10 000 €" title="Accélération" badge="Efficience & qualité" text="Optimisation des poches, qualité des actifs, fiscalité." />
-              <Milestone color="gold" icon="◇" amount="100 000 €" title="Rayonnement" badge="Préservation & options" text="Préservation, diversification avancée, immobilier, hedge." />
+              <Milestone color="green" icon="↗" amount="5 000 €" isPrivacyMode={isPrivacyMode} title="Construction" badge="Épargne régulière" text="Priorité à la constitution d’un socle diversifié et automatisé." />
+              <Milestone color="purple" icon="△" amount="10 000 €" isPrivacyMode={isPrivacyMode} title="Accélération" badge="Efficience & qualité" text="Optimisation des poches, qualité des actifs, fiscalité." />
+              <Milestone color="gold" icon="◇" amount="100 000 €" isPrivacyMode={isPrivacyMode} title="Rayonnement" badge="Préservation & options" text="Préservation, diversification avancée, immobilier, hedge." />
             </div>
           </article>
 
@@ -371,24 +420,30 @@ function DashboardPage({
 
         <aside className="right-col">
           <article className="card allocation-card">
-            <h2>Plan d’allocation cible</h2>
-            <p>Mix stratégique cible</p>
+            <h2>Répartition actuelle</h2>
+            <p>Allocation réelle de votre portefeuille aujourd’hui.</p>
 
             <div className="allocation-row">
-              <div className="donut" />
+              <div className="donut" style={{ background: allocationDonutBackground }} />
               <div className="legend">
-                {allocationRows.map((row) => (
-                  <Legend
+                {actualAllocationRows.map((row) => (
+                  <AllocationLegend
                     key={row.bucket}
+                    amount={row.value}
                     color={colorForBucket(row.bucket)}
+                    isPrivacyMode={isPrivacyMode}
                     label={row.bucket}
-                    value={`${row.targetPercent} %`}
+                    percent={row.actualPercent}
                   />
                 ))}
               </div>
             </div>
 
-            <p className="small-note">Votre allocation évolue avec le temps et vos apports.</p>
+            <div className="allocation-target-note">
+              <span>Objectif cible</span>
+              <strong>ETF 40 % · Actions 45 % · Crypto 10 % · Cash 5 %</strong>
+            </div>
+
           </article>
 
           <article className="card sqlite-status-card">
@@ -408,7 +463,7 @@ function DashboardPage({
                     <strong>{account.name}</strong>
                     <span>{labelForAccountType(account.account_type)}</span>
                   </div>
-                  <p>{formatEuro(account.total_value)}</p>
+                  <p>{displayEuro(account.total_value, isPrivacyMode)}</p>
                 </div>
               ))}
             </div>
@@ -416,13 +471,14 @@ function DashboardPage({
 
           <article className="card contribution-card">
             <h2>✧ Prochain apport</h2>
-            <p className="contribution-amount">{formatEuro(monthlyContribution.amount)} / mois</p>
+            <p className="contribution-amount">{displayEuro(monthlyContribution.amount, isPrivacyMode)} / mois</p>
             <p className="muted">Prochain virement : {monthlyContribution.nextDate}</p>
             <p className="suggestion-title">Suggestion d’allocation ⓘ</p>
             <p className="muted">Pour rester aligné sur votre cible, privilégiez :</p>
 
             {monthlyContribution.allocation.map((line) => (
-              <Allocation key={line.label} label={line.label} value={formatEuro(line.value)} color={line.color} />
+              <Allocation key={line.label} label={line.label} value={formatEuro(line.value)} color={line.color}
+                    isPrivacyMode={isPrivacyMode} />
             ))}
 
             <button className="manual-button">⚙ Ajuster manuellement</button>
@@ -450,9 +506,11 @@ function DashboardPage({
 
 function PortfolioChart({
   currentTotal,
+  isPrivacyMode,
   snapshots,
 }: {
   currentTotal: number;
+  isPrivacyMode: boolean;
   snapshots: DashboardData["snapshots"];
 }) {
   const data = (snapshots.length ? snapshots : [{ date: "Aujourd’hui", total_value: currentTotal }]).map((point) => ({
@@ -495,7 +553,7 @@ function PortfolioChart({
     <div className="chart-area">
       <div className="y-axis">
         {yLabels.map((value) => (
-          <span key={value}>{formatCompactEuro(value)}</span>
+          <span key={value}>{displayCompactEuro(value, isPrivacyMode)}</span>
         ))}
       </div>
 
@@ -521,10 +579,12 @@ function PortfolioChart({
 
 
 function PositionsPage({
+  isPrivacyMode,
   positions,
   positionsError,
   priceUpdateSummary,
 }: {
+  isPrivacyMode: boolean;
   positions: PositionPageRow[];
   positionsError: string | null;
   priceUpdateSummary: PriceUpdateSummary | null;
@@ -546,9 +606,9 @@ function PositionsPage({
       </div>
 
       <div className="transaction-summary-grid positions-summary-grid">
-        <MetricCard label="Valeur positions" value={formatEuro(totalValue)} note="hors cash" />
-        <MetricCard label="Prix de revient" value={formatEuro(totalCost)} note="coût estimé" />
-        <MetricCard label="Perf. latente" value={formatEuro(totalPerformance)} note={formatSignedPercent(totalCost > 0 ? (totalPerformance / totalCost) * 100 : 0)} />
+        <MetricCard label="Valeur positions" value={displayEuro(totalValue, isPrivacyMode)} note="hors cash" />
+        <MetricCard label="Prix de revient" value={displayEuro(totalCost, isPrivacyMode)} note="coût estimé" />
+        <MetricCard label="Perf. latente" value={displayEuro(totalPerformance, isPrivacyMode)} note={formatSignedPercent(totalCost > 0 ? (totalPerformance / totalCost) * 100 : 0)} />
         <MetricCard label="À vérifier" value={String(suspiciousPositions.length)} note="cours suspects" />
       </div>
 
@@ -590,15 +650,15 @@ function PositionsPage({
                 <td>{position.account_name}</td>
                 <td>{position.asset_class}</td>
                 <td>{formatQuantity(position.quantity)}</td>
-                <td>{formatEuro(position.average_price)}</td>
-                <td>{formatEuro(position.current_price)}</td>
+                <td>{displayEuro(position.average_price, isPrivacyMode)}</td>
+                <td>{displayEuro(position.current_price, isPrivacyMode)}</td>
                 <td>{updatedBySecurityId.get(position.position_id)?.source ?? position.price_source ?? "manual"}</td>
                 <td>{position.price_date ?? "—"}</td>
                 <td>{updatedBySecurityId.get(position.position_id)?.used_symbol ?? errorBySecurityId.get(position.position_id)?.used_symbol ?? position.ticker}</td>
                 <td className="price-error-cell">{errorBySecurityId.get(position.position_id)?.message ?? "—"}</td>
-                <td className="amount-cell">{formatEuro(position.value)}</td>
+                <td className="amount-cell">{displayEuro(position.value, isPrivacyMode)}</td>
                 <td className={position.performance_amount >= 0 ? "positive" : "negative"}>
-                  {formatEuro(position.performance_amount)} ({formatSignedPercent(position.performance_percent)})
+                  {displayEuro(position.performance_amount, isPrivacyMode)} ({formatSignedPercent(position.performance_percent)})
                 </td>
                 <td>{position.price_warning ? <span className="warning-badge">À vérifier</span> : "—"}</td>
               </tr>
@@ -612,12 +672,14 @@ function PositionsPage({
 
 function TransactionsPage({
   accounts,
+  isPrivacyMode,
   onTransactionCreated,
   securities,
   transactions,
   transactionsError,
 }: {
   accounts: DashboardData["accounts"];
+  isPrivacyMode: boolean;
   onTransactionCreated: () => Promise<void>;
   securities: DbSecurity[];
   transactions: DbTransaction[];
@@ -683,6 +745,7 @@ function TransactionsPage({
       {isFormOpen ? (
         <TransactionForm
           accounts={accounts}
+          isPrivacyMode={isPrivacyMode}
           onCancel={() => {
             setIsFormOpen(false);
             setEditingTransaction(null);
@@ -699,11 +762,11 @@ function TransactionsPage({
 
       <div className="transaction-summary-grid">
         <MetricCard label="Transactions" value={String(transactions.length)} note="enregistrées localement" />
-        <MetricCard label="Dépôts" value={formatEuro(totalDeposits)} note="apports entrants" />
-        <MetricCard label="Retraits" value={formatEuro(totalWithdrawals)} note="sorties enregistrées" />
-        <MetricCard label="Achats" value={formatEuro(totalBuys)} note="ordres exécutés" />
-        <MetricCard label="Ventes" value={formatEuro(totalSells)} note="cessions" />
-        <MetricCard label="Transferts" value={formatEuro(totalTransfers)} note="entre comptes" />
+        <MetricCard label="Dépôts" value={displayEuro(totalDeposits, isPrivacyMode)} note="apports entrants" />
+        <MetricCard label="Retraits" value={displayEuro(totalWithdrawals, isPrivacyMode)} note="sorties enregistrées" />
+        <MetricCard label="Achats" value={displayEuro(totalBuys, isPrivacyMode)} note="ordres exécutés" />
+        <MetricCard label="Ventes" value={displayEuro(totalSells, isPrivacyMode)} note="cessions" />
+        <MetricCard label="Transferts" value={displayEuro(totalTransfers, isPrivacyMode)} note="entre comptes" />
       </div>
 
       <article className="card transactions-card">
@@ -740,9 +803,9 @@ function TransactionsPage({
                 <td>{formatTransactionFlow(transaction)}</td>
                 <td>{transaction.security_name ?? "—"}</td>
                 <td>{transaction.quantity ? formatQuantity(transaction.quantity) : "—"}</td>
-                <td>{transaction.price ? formatEuro(transaction.price) : "—"}</td>
-                <td>{transaction.fees ? formatEuro(transaction.fees) : "—"}</td>
-                <td className="amount-cell">{formatEuro(transaction.amount)}</td>
+                <td>{transaction.price ? displayEuro(transaction.price, isPrivacyMode) : "—"}</td>
+                <td>{transaction.fees ? displayEuro(transaction.fees, isPrivacyMode) : "—"}</td>
+                <td className="amount-cell">{displayEuro(transaction.amount, isPrivacyMode)}</td>
                 <td>{transaction.note ?? "—"}</td>
                 <td>
                   <div className="row-actions">
@@ -761,12 +824,14 @@ function TransactionsPage({
 
 function TransactionForm({
   accounts,
+  isPrivacyMode,
   onCancel,
   onCreated,
   securities,
   transactionToEdit,
 }: {
   accounts: DashboardData["accounts"];
+  isPrivacyMode: boolean;
   onCancel: () => void;
   onCreated: () => Promise<void>;
   securities: DbSecurity[];
@@ -1155,6 +1220,7 @@ function TransactionForm({
             <AssetPicker
               assetQuery={assetQuery}
               filteredSecurities={filteredSecurities}
+              isPrivacyMode={isPrivacyMode}
               isCreatingAsset={isCreatingAsset}
               isSearchingOnline={isSearchingOnline}
               onAssetQueryChange={(value) => {
@@ -1243,6 +1309,7 @@ function AssetPicker({
   assetQuery,
   filteredSecurities,
   isCreatingAsset,
+  isPrivacyMode,
   isSearchingOnline,
   onAssetQueryChange,
   onCreateAssetFromOnlineResult,
@@ -1255,6 +1322,7 @@ function AssetPicker({
   assetQuery: string;
   filteredSecurities: DbSecurity[];
   isCreatingAsset: boolean;
+  isPrivacyMode: boolean;
   isSearchingOnline: boolean;
   onAssetQueryChange: (value: string) => void;
   onCreateAssetFromOnlineResult: (result: OnlineAssetSearchResult) => Promise<void>;
@@ -1298,7 +1366,7 @@ function AssetPicker({
                   <strong>{security.name}</strong>
                   <small>{security.ticker} · {security.asset_class}</small>
                 </span>
-                <em>{formatEuro(security.current_price)}</em>
+                <em>{displayEuro(security.current_price, isPrivacyMode)}</em>
               </button>
             ))}
           </div>
@@ -1331,6 +1399,229 @@ function AssetPicker({
   );
 }
 
+
+function ImportExportPage({
+  accounts,
+  onImported,
+  positions,
+  securities,
+  transactions,
+}: {
+  accounts: DashboardData["accounts"];
+  onImported: () => Promise<void>;
+  positions: PositionPageRow[];
+  securities: DbSecurity[];
+  transactions: DbTransaction[];
+}) {
+  const [csvText, setCsvText] = useState("");
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importResult, setImportResult] = useState<string | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+
+  const importCandidates = validateCsvTransactions(csvText, accounts, securities);
+  const previewRows = importCandidates.slice(0, 8);
+  const validRows = importCandidates.filter((row) => row.status === "valid");
+
+  async function importCsvTransactions() {
+    if (validRows.length === 0) {
+      setImportError("Aucune ligne valide à importer.");
+      return;
+    }
+
+    setIsImporting(true);
+    setImportError(null);
+    setImportResult(null);
+
+    try {
+      for (const candidate of validRows) {
+        if (!candidate.payload) {
+          continue;
+        }
+
+        const payload = candidate.payload;
+
+        if (payload.transaction_type === "buy" || payload.transaction_type === "sell") {
+          await createTradeTransaction(payload as NewTradeTransaction);
+        } else {
+          await createCashTransaction(payload as NewCashTransaction);
+        }
+      }
+
+      await onImported();
+      setImportResult(`${validRows.length} transaction(s) importée(s).`);
+    } catch (error) {
+      setImportError(String(error));
+    } finally {
+      setIsImporting(false);
+    }
+  }
+
+  function exportTransactions() {
+    const rows = transactions.map((transaction) => ({
+      id: transaction.id,
+      date: transaction.date,
+      type: transaction.transaction_type,
+      compte: transaction.account_name ?? "",
+      compte_source: transaction.from_account_name ?? "",
+      compte_destination: transaction.to_account_name ?? "",
+      actif: transaction.security_name ?? "",
+      montant: transaction.amount,
+      quantite: transaction.quantity ?? "",
+      prix: transaction.price ?? "",
+      frais: transaction.fees,
+      note: transaction.note ?? "",
+    }));
+
+    downloadCsv("atlas-transactions.csv", rows);
+  }
+
+  function exportPositions() {
+    const rows = positions.map((position) => ({
+      actif: position.security_name,
+      ticker: position.ticker,
+      compte: position.account_name,
+      classe: position.asset_class,
+      quantite: position.quantity,
+      pru: position.average_price,
+      cours: position.current_price,
+      source_prix: position.price_source,
+      date_prix: position.price_date ?? "",
+      valeur: position.value,
+      performance: position.performance_amount,
+      performance_pourcent: position.performance_percent,
+    }));
+
+    downloadCsv("atlas-positions.csv", rows);
+  }
+
+  function exportTransactionTemplate() {
+    downloadCsv("atlas-modele-transactions.csv", [
+      {
+        date: "2026-07-08",
+        type: "buy",
+        compte: "PEA",
+        compte_source: "",
+        compte_destination: "",
+        ticker: "MC.PA",
+        actif: "LVMH",
+        quantite: "1",
+        prix: "488.85",
+        frais: "0",
+        montant: "",
+        note: "Exemple achat",
+      },
+    ]);
+  }
+
+  return (
+    <section className="page">
+      <div className="title-block">
+        <h1>Importer / Exporter</h1>
+        <p>Importez ou exportez vos transactions et positions au format CSV.</p>
+      </div>
+
+      <div className="import-export-grid">
+        <article className="card import-export-card">
+          <h2>Exporter</h2>
+          <p>Récupérez vos données locales en CSV pour contrôle ou sauvegarde manuelle.</p>
+
+          <div className="import-export-actions">
+            <button className="primary-action" type="button" onClick={exportTransactions}>
+              Exporter les transactions
+            </button>
+            <button className="secondary-action" type="button" onClick={exportPositions}>
+              Exporter les positions
+            </button>
+            <button className="secondary-action" type="button" onClick={exportTransactionTemplate}>
+              Télécharger un modèle
+            </button>
+          </div>
+        </article>
+
+        <article className="card import-export-card">
+          <h2>Importer</h2>
+          <p>Collez un CSV, vérifiez les lignes, puis importez uniquement les lignes valides.</p>
+
+          <textarea
+            className="csv-preview-input"
+            onChange={(event) => {
+              setCsvText(event.target.value);
+              setImportError(null);
+              setImportResult(null);
+            }}
+            placeholder="date,type,compte,compte_source,compte_destination,ticker,actif,quantite,prix,frais,montant,note"
+            value={csvText}
+          />
+
+          <div className="csv-preview-toolbar">
+            <div className="csv-preview-status">
+              {importCandidates.length > 0
+                ? `${validRows.length}/${importCandidates.length} ligne(s) valide(s)`
+                : "Aucune ligne détectée"}
+            </div>
+
+            <button
+              className="primary-action"
+              disabled={isImporting || validRows.length === 0}
+              onClick={importCsvTransactions}
+              type="button"
+            >
+              {isImporting ? "Import..." : "Importer les lignes valides"}
+            </button>
+          </div>
+
+          {importError ? <p className="form-error">{importError}</p> : null}
+          {importResult ? <p className="form-success">{importResult}</p> : null}
+
+          {previewRows.length > 0 ? (
+            <div className="csv-preview-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Statut</th>
+                    <th>Date</th>
+                    <th>Type</th>
+                    <th>Compte</th>
+                    <th>Source</th>
+                    <th>Destination</th>
+                    <th>Ticker</th>
+                    <th>Quantité</th>
+                    <th>Prix</th>
+                    <th>Montant</th>
+                    <th>Message</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {previewRows.map((candidate, index) => (
+                    <tr key={index}>
+                      <td>
+                        <span className={candidate.status === "valid" ? "csv-status valid" : "csv-status error"}>
+                          {candidate.status === "valid" ? "OK" : "Erreur"}
+                        </span>
+                      </td>
+                      <td>{candidate.row.date || "—"}</td>
+                      <td>{candidate.row.type || "—"}</td>
+                      <td>{candidate.row.compte || "—"}</td>
+                      <td>{candidate.row.compte_source || "—"}</td>
+                      <td>{candidate.row.compte_destination || "—"}</td>
+                      <td>{candidate.row.ticker || "—"}</td>
+                      <td>{candidate.row.quantite || "—"}</td>
+                      <td>{candidate.row.prix || "—"}</td>
+                      <td>{candidate.row.montant || "—"}</td>
+                      <td>{candidate.message}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </article>
+      </div>
+    </section>
+  );
+}
+
+
 function PlaceholderPage({ title }: { title: string }) {
   return (
     <section className="page">
@@ -1361,6 +1652,7 @@ function Milestone({
   color,
   icon,
   amount,
+  isPrivacyMode,
   title,
   badge,
   text,
@@ -1368,6 +1660,7 @@ function Milestone({
   color: string;
   icon: string;
   amount: string;
+  isPrivacyMode: boolean;
   title: string;
   badge: string;
   text: string;
@@ -1375,7 +1668,7 @@ function Milestone({
   return (
     <div className="milestone">
       <div className={`milestone-icon ${color}`}>{icon}</div>
-      <strong>{amount}</strong>
+      <strong>{displayText(amount, isPrivacyMode)}</strong>
       <h3>{title}</h3>
       <p>{text}</p>
       <span className={`badge ${color}`}>{badge}</span>
@@ -1383,22 +1676,49 @@ function Milestone({
   );
 }
 
-function Legend({ color, label, value }: { color: string; label: string; value: string }) {
+
+function AllocationLegend({
+  amount,
+  color,
+  label,
+  isPrivacyMode,
+  percent,
+}: {
+  amount: number;
+  color: string;
+  isPrivacyMode: boolean;
+  label: string;
+  percent: number;
+}) {
   return (
-    <div className="legend-line">
+    <div className="allocation-legend-line">
       <span style={{ background: color }} />
-      <p>{label}</p>
-      <strong>{value}</strong>
+      <div>
+        <strong>{label}</strong>
+        <small>{displayCompactEuro(amount, isPrivacyMode)}</small>
+      </div>
+      <p>{formatUnsignedPercent(percent)}</p>
     </div>
   );
 }
 
-function Allocation({ color, label, value }: { color: string; label: string; value: string }) {
+
+function Allocation({
+  color,
+  isPrivacyMode,
+  label,
+  value,
+}: {
+  color: string;
+  isPrivacyMode: boolean;
+  label: string;
+  value: string;
+}) {
   return (
     <div className="allocation-line">
       <span style={{ background: color }} />
       <p>{label}</p>
-      <strong>{value}</strong>
+      <strong>{displayText(value, isPrivacyMode)}</strong>
     </div>
   );
 }
@@ -1412,6 +1732,280 @@ function Attention({ kind, text }: { kind: string; text: string }) {
     </div>
   );
 }
+
+
+
+const MASKED_AMOUNT = "••••••";
+
+function displayEuro(value: number, isPrivacyMode: boolean) {
+  return isPrivacyMode ? MASKED_AMOUNT : formatEuro(value);
+}
+
+function displayCompactEuro(value: number, isPrivacyMode: boolean) {
+  return isPrivacyMode ? MASKED_AMOUNT : formatCompactEuro(value);
+}
+
+function displayText(value: string, isPrivacyMode: boolean) {
+  return isPrivacyMode ? MASKED_AMOUNT : value;
+}
+
+
+function buildAllocationDonut(rows: AllocationDisplayRow[]) {
+  let start = 0;
+  const segments = rows
+    .filter((row) => (row.actualPercent ?? 0) > 0)
+    .map((row) => {
+      const percent = row.actualPercent ?? 0;
+      const end = start + percent * 3.6;
+      const segment = `${colorForBucket(row.bucket)} ${start.toFixed(2)}deg ${end.toFixed(2)}deg`;
+      start = end;
+      return segment;
+    });
+
+  return segments.length > 0 ? `conic-gradient(${segments.join(", ")})` : "#eef0f2";
+}
+
+function csvEscape(value: unknown) {
+  const text = String(value ?? "");
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function downloadCsv(filename: string, rows: Record<string, unknown>[]) {
+  if (rows.length === 0) {
+    return;
+  }
+
+  const headers = Object.keys(rows[0]);
+  const csv = [
+    headers.join(","),
+    ...rows.map((row) => headers.map((header) => csvEscape(row[header])).join(",")),
+  ].join("\n");
+
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = filename;
+  link.click();
+
+  URL.revokeObjectURL(url);
+}
+
+
+function normalizeCsvValue(value: string | undefined) {
+  return (value ?? "").trim();
+}
+
+function parseCsvNumber(value: string | undefined) {
+  const normalized = normalizeCsvValue(value).replace(/\s/g, "").replace(",", ".");
+
+  if (!normalized) {
+    return null;
+  }
+
+  const number = Number(normalized);
+
+  return Number.isFinite(number) ? number : null;
+}
+
+function findAccountIdByCsvName(accounts: DashboardData["accounts"], value: string | undefined) {
+  const normalized = normalizeCsvValue(value).toLowerCase();
+
+  if (!normalized) {
+    return null;
+  }
+
+  return (
+    accounts.find((account) => account.id.toLowerCase() === normalized)?.id ??
+    accounts.find((account) => account.name.toLowerCase() === normalized)?.id ??
+    accounts.find((account) => labelForAccountType(account.account_type).toLowerCase() === normalized)?.id ??
+    null
+  );
+}
+
+function findSecurityIdByCsvValue(securities: DbSecurity[], ticker: string | undefined, name: string | undefined) {
+  const normalizedTicker = normalizeCsvValue(ticker).toLowerCase();
+  const normalizedName = normalizeCsvValue(name).toLowerCase();
+
+  if (normalizedTicker) {
+    const byTicker = securities.find((security) => security.ticker.toLowerCase() === normalizedTicker);
+
+    if (byTicker) {
+      return byTicker.id;
+    }
+  }
+
+  if (normalizedName) {
+    const byName = securities.find((security) => security.name.toLowerCase() === normalizedName);
+
+    if (byName) {
+      return byName.id;
+    }
+  }
+
+  return null;
+}
+
+function validateCsvTransactions(
+  csvText: string,
+  accounts: DashboardData["accounts"],
+  securities: DbSecurity[],
+): CsvImportCandidate[] {
+  const rows = parseCsvPreview(csvText);
+
+  return rows.map((row) => {
+    const type = normalizeCsvValue(row.type).toLowerCase() as TransactionFormType;
+    const date = normalizeCsvValue(row.date);
+    const amount = parseCsvNumber(row.montant);
+    const quantity = parseCsvNumber(row.quantite);
+    const price = parseCsvNumber(row.prix);
+    const fees = parseCsvNumber(row.frais) ?? 0;
+    const note = normalizeCsvValue(row.note) || null;
+
+    if (!date) {
+      return { row, status: "error", message: "Date manquante." };
+    }
+
+    if (!["deposit", "withdrawal", "transfer", "buy", "sell"].includes(type)) {
+      return { row, status: "error", message: "Type invalide." };
+    }
+
+    if (fees < 0) {
+      return { row, status: "error", message: "Frais négatifs." };
+    }
+
+    if (type === "buy" || type === "sell") {
+      const accountId = findAccountIdByCsvName(accounts, row.compte);
+      const securityId = findSecurityIdByCsvValue(securities, row.ticker, row.actif);
+
+      if (!accountId) {
+        return { row, status: "error", message: "Compte introuvable." };
+      }
+
+      if (!securityId) {
+        return { row, status: "error", message: "Actif introuvable. Créez-le d’abord via la recherche Yahoo." };
+      }
+
+      if (!quantity || quantity <= 0) {
+        return { row, status: "error", message: "Quantité invalide." };
+      }
+
+      if (!price || price <= 0) {
+        return { row, status: "error", message: "Prix invalide." };
+      }
+
+      return {
+        row,
+        status: "valid",
+        message: "Prêt à importer.",
+        payload: {
+          transaction_type: type,
+          date,
+          account_id: accountId,
+          security_id: securityId,
+          quantity,
+          price,
+          fees,
+          note,
+        },
+      };
+    }
+
+    if (!amount || amount <= 0) {
+      return { row, status: "error", message: "Montant invalide." };
+    }
+
+    const fromAccountId = findAccountIdByCsvName(accounts, row.compte_source || row.compte);
+    const toAccountId = findAccountIdByCsvName(accounts, row.compte_destination || row.compte);
+
+    if (type === "deposit") {
+      if (!toAccountId) {
+        return { row, status: "error", message: "Compte destination introuvable." };
+      }
+
+      return {
+        row,
+        status: "valid",
+        message: "Prêt à importer.",
+        payload: {
+          transaction_type: type,
+          date,
+          from_account_id: null,
+          to_account_id: toAccountId,
+          amount,
+          note,
+        },
+      };
+    }
+
+    if (type === "withdrawal") {
+      if (!fromAccountId) {
+        return { row, status: "error", message: "Compte source introuvable." };
+      }
+
+      return {
+        row,
+        status: "valid",
+        message: "Prêt à importer.",
+        payload: {
+          transaction_type: type,
+          date,
+          from_account_id: fromAccountId,
+          to_account_id: null,
+          amount,
+          note,
+        },
+      };
+    }
+
+    if (!fromAccountId || !toAccountId) {
+      return { row, status: "error", message: "Compte source ou destination introuvable." };
+    }
+
+    if (fromAccountId === toAccountId) {
+      return { row, status: "error", message: "Source et destination identiques." };
+    }
+
+    return {
+      row,
+      status: "valid",
+      message: "Prêt à importer.",
+      payload: {
+        transaction_type: type,
+        date,
+        from_account_id: fromAccountId,
+        to_account_id: toAccountId,
+        amount,
+        note,
+      },
+    };
+  });
+}
+
+
+function parseCsvPreview(text: string) {
+  const lines = text
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length < 2) {
+    return [];
+  }
+
+  const headers = lines[0].split(",").map((header) => header.trim());
+
+  return lines.slice(1).map((line) => {
+    const values = line.split(",").map((value) => value.trim());
+    return headers.reduce<Record<string, string>>((row, header, index) => {
+      row[header] = values[index] ?? "";
+      return row;
+    }, {});
+  });
+}
+
 
 function colorForBucket(bucket: string) {
   const colors: Record<string, string> = {

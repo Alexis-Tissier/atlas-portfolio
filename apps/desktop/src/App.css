@@ -405,3 +405,158 @@ td:first-child { color: #374151; font-weight: 600; }
 .row-actions button:hover {
   background: var(--surface-muted);
 }
+
+
+.import-export-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 16px;
+}
+
+.import-export-card {
+  padding: 20px;
+}
+
+.import-export-card > p {
+  margin: 8px 0 18px;
+  color: #8b949f;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.import-export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.csv-preview-input {
+  width: 100%;
+  min-height: 170px;
+  border: 1px solid #dfe3e8;
+  border-radius: 12px;
+  padding: 12px;
+  resize: vertical;
+  color: #334155;
+  font: inherit;
+  font-size: 12px;
+}
+
+.csv-preview-status {
+  margin-top: 10px;
+  color: #667085;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.csv-preview-table {
+  max-height: 300px;
+  overflow: auto;
+}
+
+
+.allocation-legend-line {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  color: #667085;
+}
+
+.allocation-legend-line > span {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+}
+
+.allocation-legend-line div {
+  display: grid;
+  gap: 2px;
+}
+
+.allocation-legend-line strong {
+  color: #334155;
+  font-size: 13px;
+}
+
+.allocation-legend-line small {
+  color: #9aa3ad;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.allocation-legend-line p {
+  margin: 0;
+  color: #253142;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.allocation-target-note {
+  margin-top: 16px;
+  padding: 10px 12px;
+  border-radius: 11px;
+  background: #f8fafc;
+  border: 1px solid #eef0f2;
+}
+
+.allocation-target-note span {
+  display: block;
+  margin-bottom: 4px;
+  color: #8b949f;
+  font-size: 11px;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.allocation-target-note strong {
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+
+.privacy-toggle {
+  border-radius: 999px !important;
+  padding: 4px 8px;
+}
+
+.privacy-toggle.active {
+  background: #1f2937 !important;
+  color: #fff !important;
+}
+
+
+.csv-preview-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.csv-status {
+  display: inline-flex;
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.csv-status.valid {
+  color: #17884d;
+  background: #e7f7ec;
+}
+
+.csv-status.error {
+  color: #b42318;
+  background: #fee4e2;
+}
+
+.form-success {
+  margin: 12px 0 0;
+  color: #17884d;
+  font-size: 12px;
+  font-weight: 700;
+}
