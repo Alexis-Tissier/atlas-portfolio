@@ -114,6 +114,42 @@ struct NewOnlineSecurity {
     region: Option<String>,
 }
 
+
+#[derive(Debug, Serialize)]
+struct PriceUpdateLine {
+    security_id: String,
+    name: String,
+    ticker: String,
+    old_price: f64,
+    new_price: f64,
+}
+
+#[derive(Debug, Serialize)]
+struct PriceUpdateError {
+    security_id: String,
+    name: String,
+    ticker: String,
+    message: String,
+}
+
+#[derive(Debug, Serialize)]
+struct PriceUpdateSummary {
+    updated_at: String,
+    updated_count: usize,
+    skipped_count: usize,
+    error_count: usize,
+    updated: Vec<PriceUpdateLine>,
+    errors: Vec<PriceUpdateError>,
+}
+
+#[derive(Debug)]
+struct OpenSecurityForPriceUpdate {
+    id: String,
+    name: String,
+    ticker: String,
+    old_price: f64,
+}
+
 #[derive(Debug, Deserialize)]
 struct NewCashTransaction {
     transaction_type: String,
@@ -1031,6 +1067,156 @@ fn create_security_from_online_result(input: NewOnlineSecurity) -> Result<DbSecu
     read_security_by_id(&connection, &security_id)
 }
 
+
+#[tauri::command]
+fn update_open_position_prices() -> Result<PriceUpdateSummary, String> {
+    let connection = open_database()?;
+
+    let securities = {
+        let mut statement = connection
+            .prepare(
+                "
+                SELECT
+                  s.id,
+                  s.name,
+                  s.ticker,
+                  COALESCE(
+                    (
+                      SELECT p.close_price
+                      FROM prices p
+                      WHERE p.security_id = s.id
+                      ORDER BY p.date DESC, p.created_at DESC
+                      LIMIT 1
+                    ),
+                    (
+                      SELECT pos.current_price
+                      FROM positions pos
+                      WHERE pos.security_id = s.id
+                      ORDER BY pos.updated_at DESC
+                      LIMIT 1
+                    ),
+                    0
+                  ) AS old_price
+                FROM securities s
+                WHERE EXISTS (
+                  SELECT 1
+                  FROM positions p
+                  WHERE p.security_id = s.id
+                    AND p.quantity > 0
+                )
+                ORDER BY s.name
+                ",
+            )
+            .map_err(|error| format!("Erreur SQL actifs à mettre à jour : {error}"))?;
+
+        let rows = statement
+            .query_map([], |row| {
+                Ok(OpenSecurityForPriceUpdate {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    ticker: row.get(2)?,
+                    old_price: row.get(3)?,
+                })
+            })
+            .map_err(|error| format!("Erreur lecture actifs à mettre à jour : {error}"))?;
+
+        let mut securities = Vec::new();
+
+        for row in rows {
+            securities.push(row.map_err(|error| format!("Erreur conversion actif à mettre à jour : {error}"))?);
+        }
+
+        securities
+    };
+
+    let mut updated = Vec::new();
+    let mut errors = Vec::new();
+    let mut skipped_count = 0usize;
+
+    for security in securities {
+        if security.ticker.trim().is_empty() {
+            skipped_count += 1;
+            errors.push(PriceUpdateError {
+                security_id: security.id,
+                name: security.name,
+                ticker: security.ticker,
+                message: "Ticker absent, ancien cours conservé.".to_string(),
+            });
+            continue;
+        }
+
+        match fetch_latest_price(&security.ticker) {
+            Ok(new_price) if new_price > 0.0 => {
+                connection
+                    .execute(
+                        "
+                        INSERT INTO prices (security_id, date, close_price, currency, source)
+                        SELECT ?1, date('now'), ?2, currency, 'alpha_vantage'
+                        FROM securities
+                        WHERE id = ?1
+                        ON CONFLICT(security_id, date, source) DO UPDATE SET
+                          close_price = excluded.close_price,
+                          currency = excluded.currency
+                        ",
+                        params![security.id, new_price],
+                    )
+                    .map_err(|error| format!("Erreur enregistrement cours {} : {error}", security.ticker))?;
+
+                connection
+                    .execute(
+                        "
+                        UPDATE positions
+                        SET current_price = ?1,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE security_id = ?2
+                        ",
+                        params![new_price, security.id],
+                    )
+                    .map_err(|error| format!("Erreur mise à jour positions {} : {error}", security.ticker))?;
+
+                updated.push(PriceUpdateLine {
+                    security_id: security.id,
+                    name: security.name,
+                    ticker: security.ticker,
+                    old_price: security.old_price,
+                    new_price,
+                });
+            }
+            Ok(new_price) => {
+                skipped_count += 1;
+                errors.push(PriceUpdateError {
+                    security_id: security.id,
+                    name: security.name,
+                    ticker: security.ticker,
+                    message: format!("Cours invalide reçu ({new_price}), ancien cours conservé."),
+                });
+            }
+            Err(error) => {
+                skipped_count += 1;
+                errors.push(PriceUpdateError {
+                    security_id: security.id,
+                    name: security.name,
+                    ticker: security.ticker,
+                    message: format!("{error}. Ancien cours conservé."),
+                });
+            }
+        }
+    }
+
+    let updated_at = connection
+        .query_row("SELECT datetime('now', 'localtime')", [], |row| row.get::<_, String>(0))
+        .unwrap_or_else(|_| "maintenant".to_string());
+
+    Ok(PriceUpdateSummary {
+        updated_at,
+        updated_count: updated.len(),
+        skipped_count,
+        error_count: errors.len(),
+        updated,
+        errors,
+    })
+}
+
 #[tauri::command]
 fn create_trade_transaction(input: NewTradeTransaction) -> Result<String, String> {
     if input.date.trim().is_empty() {
@@ -1359,11 +1545,12 @@ pub fn run() {
             get_dashboard_data,
             get_transactions,
             get_securities,
+            update_open_position_prices,
             create_security,
             search_online_assets,
             create_security_from_online_result,
             create_cash_transaction,
-            create_trade_transaction
+            create_trade_transaction,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -10,11 +10,13 @@ import {
   getSecurities,
   getTransactions,
   searchOnlineAssets,
+  updateOpenPositionPrices,
   type DashboardData,
   type DbSecurity,
   type DbTransaction,
   type NewCashTransaction,
   type NewTradeTransaction,
+  type PriceUpdateSummary,
   type OnlineAssetSearchResult,
 } from "./lib/tauriApi";
 
@@ -40,6 +42,9 @@ function App() {
   const [securities, setSecurities] = useState<DbSecurity[]>([]);
   const [databaseError, setDatabaseError] = useState<string | null>(null);
   const [transactionsError, setTransactionsError] = useState<string | null>(null);
+  const [priceUpdateSummary, setPriceUpdateSummary] = useState<PriceUpdateSummary | null>(null);
+  const [priceUpdateError, setPriceUpdateError] = useState<string | null>(null);
+  const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
 
   async function refreshData() {
     try {
@@ -68,8 +73,48 @@ function App() {
     }
   }
 
+
+  async function refreshOpenPositionPrices(silent = false) {
+    setIsUpdatingPrices(true);
+
+    try {
+      const summary = await updateOpenPositionPrices();
+      setPriceUpdateSummary(summary);
+      setPriceUpdateError(null);
+      await refreshData();
+    } catch (error) {
+      if (!silent) {
+        console.error(error);
+      }
+      setPriceUpdateError(String(error));
+    } finally {
+      setIsUpdatingPrices(false);
+    }
+  }
+
   useEffect(() => {
-    refreshData();
+    let cancelled = false;
+
+    async function bootstrap() {
+      await refreshData();
+
+      if (!cancelled) {
+        await refreshOpenPositionPrices(true);
+      }
+    }
+
+    bootstrap();
+
+    const intervalId = window.setInterval(() => {
+      if (!cancelled) {
+        refreshOpenPositionPrices(true);
+      }
+    }, 30 * 60 * 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
   }, []);
 
   const mockSummary = getPortfolioSummary();
@@ -168,6 +213,10 @@ function App() {
             dashboardData={dashboardData}
             positionRows={positionRows}
             summary={summary}
+            isUpdatingPrices={isUpdatingPrices}
+            onPriceRefresh={() => refreshOpenPositionPrices(false)}
+            priceUpdateError={priceUpdateError}
+            priceUpdateSummary={priceUpdateSummary}
           />
         ) : (
           <PlaceholderPage title={currentPage} />
@@ -182,14 +231,22 @@ function DashboardPage({
   allocationRows,
   databaseError,
   dashboardData,
+  isUpdatingPrices,
+  onPriceRefresh,
   positionRows,
+  priceUpdateError,
+  priceUpdateSummary,
   summary,
 }: {
   accounts: DashboardData["accounts"];
   allocationRows: { bucket: string; targetPercent: number; actualPercent?: number; differencePercent?: number; value?: number }[];
   databaseError: string | null;
   dashboardData: DashboardData | null;
+  isUpdatingPrices: boolean;
+  onPriceRefresh: () => void;
   positionRows: { asset: string; category: string; account: string; quantity: string; value: string; weight: string; performance: string }[];
+  priceUpdateError: string | null;
+  priceUpdateSummary: PriceUpdateSummary | null;
   summary: { total: number; performance_amount: number; performance_percent: number; start_date: string };
 }) {
   return (
@@ -211,7 +268,21 @@ function DashboardPage({
               <p className="muted">Depuis le {summary.start_date}</p>
             </div>
 
-            <button className="select-button">Depuis le début⌄</button>
+            <div className="price-refresh-panel">
+              <button className="select-button" type="button" onClick={onPriceRefresh} disabled={isUpdatingPrices}>
+                {isUpdatingPrices ? "Mise à jour..." : "Mettre à jour les cours"}
+              </button>
+
+              {priceUpdateSummary ? (
+                <p className="muted price-refresh-note">
+                  Dernière mise à jour : {priceUpdateSummary.updated_at} · {priceUpdateSummary.updated_count} cours OK{priceUpdateSummary.error_count ? ` · ${priceUpdateSummary.error_count} erreur(s)` : ""}
+                </p>
+              ) : null}
+
+              {priceUpdateError ? (
+                <p className="error-text price-refresh-note">Cours conservés : {priceUpdateError}</p>
+              ) : null}
+            </div>
           </article>
 
           <article className="card chart-card">

@@ -97,6 +97,31 @@ export type NewOnlineSecurity = {
   region?: string | null;
 };
 
+
+export type PriceUpdateLine = {
+  security_id: string;
+  name: string;
+  ticker: string;
+  old_price: number;
+  new_price: number;
+};
+
+export type PriceUpdateError = {
+  security_id: string;
+  name: string;
+  ticker: string;
+  message: string;
+};
+
+export type PriceUpdateSummary = {
+  updated_at: string;
+  updated_count: number;
+  skipped_count: number;
+  error_count: number;
+  updated: PriceUpdateLine[];
+  errors: PriceUpdateError[];
+};
+
 export type NewCashTransaction = {
   transaction_type: "deposit" | "withdrawal" | "transfer";
   date: string;
@@ -163,4 +188,9 @@ export async function searchOnlineAssets(query: string) {
 
 export async function createSecurityFromOnlineResult(input: NewOnlineSecurity) {
   return invoke<DbSecurity>("create_security_from_online_result", { input });
+}
+
+
+export async function updateOpenPositionPrices() {
+  return invoke<PriceUpdateSummary>("update_open_position_prices");
 }
