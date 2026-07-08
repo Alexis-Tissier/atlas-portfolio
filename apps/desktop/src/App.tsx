@@ -6,7 +6,7 @@ import {
   getPositionRows,
   getPortfolioSummary,
   monthlyContribution,
-} from "./data/mockPortfolio";
+} from "./mocks/mockPortfolio";
 
 const nav = [
   "Portefeuille",
