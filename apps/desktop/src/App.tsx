@@ -913,7 +913,7 @@ function TransactionForm({
     const query = assetQuery.trim();
 
     if (query.length < 2) {
-      setOnlineSearchError("Tape au moins 2 caractères pour chercher un actif en ligne.");
+      setOnlineSearchError("Tape au moins 2 caractères pour chercher un actif sur Yahoo.");
       return;
     }
 
@@ -925,7 +925,7 @@ function TransactionForm({
       setOnlineAssetResults(results);
 
       if (results.length === 0) {
-        setOnlineSearchError("Aucun résultat trouvé en ligne.");
+        setOnlineSearchError("Aucun résultat trouvé sur Yahoo Finance.");
       }
     } catch (error) {
       setOnlineAssetResults([]);
@@ -1277,7 +1277,7 @@ function AssetPicker({
 
       <div className="asset-picker-actions">
         <button className="secondary-action" type="button" onClick={onSearchOnlineAssets} disabled={isSearchingOnline || isCreatingAsset}>
-          {isSearchingOnline ? "Recherche..." : "Chercher en ligne"}
+          {isSearchingOnline ? "Recherche..." : "Chercher sur Yahoo"}
         </button>
       </div>
 

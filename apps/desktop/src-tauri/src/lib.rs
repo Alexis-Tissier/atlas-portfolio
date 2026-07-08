@@ -368,14 +368,6 @@ fn alpha_vantage_request(parameters: &[(&str, String)]) -> Result<Value, String>
     Ok(json)
 }
 
-fn alpha_asset_class(alpha_type: &str) -> String {
-    match alpha_type.to_lowercase().as_str() {
-        value if value.contains("etf") => "ETF".to_string(),
-        value if value.contains("crypto") || value.contains("digital") => "Crypto".to_string(),
-        _ => "Actions".to_string(),
-    }
-}
-
 fn sanitize_security_id(symbol: &str, now: u128) -> String {
     let cleaned = symbol
         .chars()
@@ -1413,55 +1405,115 @@ fn search_online_assets(query: String) -> Result<Vec<OnlineAssetSearchResult>, S
         return Err("Tape au moins 2 caractères pour lancer la recherche.".to_string());
     }
 
-    let json = alpha_vantage_request(&[
-        ("function", "SYMBOL_SEARCH".to_string()),
-        ("keywords", query.to_string()),
-    ])?;
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(12))
+        .build()
+        .map_err(|error| format!("Impossible de créer le client HTTP Yahoo : {error}"))?;
 
-    let matches = json
-        .get("bestMatches")
+    let json = client
+        .get("https://query1.finance.yahoo.com/v1/finance/search")
+        .header(
+            "User-Agent",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/126 Safari/537.36",
+        )
+        .header("Accept", "application/json,text/plain,*/*")
+        .query(&[
+            ("q", query),
+            ("quotesCount", "12"),
+            ("newsCount", "0"),
+            ("enableFuzzyQuery", "true"),
+        ])
+        .send()
+        .map_err(|error| format!("Erreur réseau Yahoo Finance : {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Erreur HTTP Yahoo Finance : {error}"))?
+        .json::<Value>()
+        .map_err(|error| format!("Réponse Yahoo Finance illisible : {error}"))?;
+
+    let quotes = json
+        .get("quotes")
         .and_then(Value::as_array)
-        .ok_or_else(|| "Alpha Vantage n'a renvoyé aucun résultat exploitable.".to_string())?;
+        .ok_or_else(|| "Yahoo Finance n'a renvoyé aucun résultat exploitable.".to_string())?;
 
-    let results = matches
+    let results = quotes
         .iter()
         .take(12)
         .filter_map(|item| {
-            let symbol = item.get("1. symbol")?.as_str()?.trim().to_string();
-            let name = item.get("2. name")?.as_str()?.trim().to_string();
-            let alpha_type = item
-                .get("3. type")
+            let symbol = item.get("symbol")?.as_str()?.trim().to_string();
+
+            if symbol.is_empty() {
+                return None;
+            }
+
+            let name = item
+                .get("shortname")
+                .or_else(|| item.get("longname"))
+                .or_else(|| item.get("name"))
                 .and_then(Value::as_str)
-                .unwrap_or("Equity");
+                .unwrap_or(symbol.as_str())
+                .trim()
+                .to_string();
+
+            let quote_type = item
+                .get("quoteType")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
+
+            let asset_class = match quote_type {
+                "ETF" => "ETF",
+                "EQUITY" => "Actions",
+                "CRYPTOCURRENCY" => "Crypto",
+                _ if symbol.ends_with("-EUR") || symbol.ends_with("-USD") => "Crypto",
+                _ => "Actions",
+            }
+            .to_string();
+
             let region = item
-                .get("4. region")
+                .get("exchDisp")
+                .or_else(|| item.get("exchange"))
                 .and_then(Value::as_str)
-                .unwrap_or("—")
+                .unwrap_or("Yahoo Finance")
                 .trim()
                 .to_string();
+
             let currency = item
-                .get("8. currency")
+                .get("currency")
                 .and_then(Value::as_str)
-                .unwrap_or("EUR")
+                .unwrap_or_else(|| {
+                    if symbol.ends_with(".PA")
+                        || symbol.ends_with(".AS")
+                        || symbol.ends_with("-EUR")
+                    {
+                        "EUR"
+                    } else {
+                        "USD"
+                    }
+                })
                 .trim()
                 .to_string();
+
             let match_score = item
-                .get("9. matchScore")
-                .and_then(Value::as_str)
-                .and_then(|value| value.parse::<f64>().ok())
+                .get("score")
+                .or_else(|| item.get("matchScore"))
+                .and_then(Value::as_f64)
                 .unwrap_or(0.0);
 
             Some(OnlineAssetSearchResult {
                 symbol,
                 name,
-                asset_class: alpha_asset_class(alpha_type),
+                asset_class,
                 region,
                 currency,
-                source: "alpha_vantage".to_string(),
+                source: "yahoo".to_string(),
                 match_score,
             })
         })
         .collect::<Vec<_>>();
+
+    if results.is_empty() {
+        return Err("Aucun actif trouvé sur Yahoo Finance.".to_string());
+    }
 
     Ok(results)
 }
