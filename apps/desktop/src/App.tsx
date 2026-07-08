@@ -4,11 +4,15 @@ import { attentionPoints, monthlyContribution } from "./mocks/mockPortfolio";
 import { formatEuro, getAllocationRows, getPositionRows, getPortfolioSummary } from "./core/portfolioCalculations";
 import {
   createCashTransaction,
+  createTradeTransaction,
   getDashboardData,
+  getSecurities,
   getTransactions,
   type DashboardData,
+  type DbSecurity,
   type DbTransaction,
   type NewCashTransaction,
+  type NewTradeTransaction,
 } from "./lib/tauriApi";
 
 const nav = [
@@ -23,10 +27,14 @@ const nav = [
   "Journal",
 ];
 
+type TransactionFormType = "deposit" | "withdrawal" | "transfer" | "buy" | "sell";
+type CashTransactionType = "deposit" | "withdrawal" | "transfer";
+
 function App() {
   const [currentPage, setCurrentPage] = useState("Portefeuille");
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [transactions, setTransactions] = useState<DbTransaction[]>([]);
+  const [securities, setSecurities] = useState<DbSecurity[]>([]);
   const [databaseError, setDatabaseError] = useState<string | null>(null);
   const [transactionsError, setTransactionsError] = useState<string | null>(null);
 
@@ -47,6 +55,13 @@ function App() {
     } catch (error) {
       console.error(error);
       setTransactionsError(String(error));
+    }
+
+    try {
+      const data = await getSecurities();
+      setSecurities(data);
+    } catch (error) {
+      console.error(error);
     }
   }
 
@@ -138,6 +153,7 @@ function App() {
           <TransactionsPage
             accounts={accounts}
             onTransactionCreated={refreshData}
+            securities={securities}
             transactions={transactions}
             transactionsError={transactionsError}
           />
@@ -366,11 +382,13 @@ function DashboardPage({
 function TransactionsPage({
   accounts,
   onTransactionCreated,
+  securities,
   transactions,
   transactionsError,
 }: {
   accounts: DashboardData["accounts"];
   onTransactionCreated: () => Promise<void>;
+  securities: DbSecurity[];
   transactions: DbTransaction[];
   transactionsError: string | null;
 }) {
@@ -388,6 +406,14 @@ function TransactionsPage({
     .filter((transaction) => transaction.transaction_type === "transfer")
     .reduce((sum, transaction) => sum + transaction.amount, 0);
 
+  const totalBuys = transactions
+    .filter((transaction) => transaction.transaction_type === "buy")
+    .reduce((sum, transaction) => sum + transaction.amount, 0);
+
+  const totalSells = transactions
+    .filter((transaction) => transaction.transaction_type === "sell")
+    .reduce((sum, transaction) => sum + transaction.amount, 0);
+
   return (
     <section className="page">
       <div className="title-block page-title-row">
@@ -402,20 +428,22 @@ function TransactionsPage({
       </div>
 
       {isFormOpen ? (
-        <CashTransactionForm
+        <TransactionForm
           accounts={accounts}
           onCancel={() => setIsFormOpen(false)}
           onCreated={async () => {
             await onTransactionCreated();
             setIsFormOpen(false);
           }}
+          securities={securities}
         />
       ) : null}
 
       <div className="transaction-summary-grid">
         <MetricCard label="Transactions" value={String(transactions.length)} note="lues depuis SQLite" />
         <MetricCard label="Dépôts" value={formatEuro(totalDeposits)} note="apports entrants" />
-        <MetricCard label="Retraits" value={formatEuro(totalWithdrawals)} note="sorties de cash" />
+        <MetricCard label="Achats" value={formatEuro(totalBuys)} note="ordres exécutés" />
+        <MetricCard label="Ventes" value={formatEuro(totalSells)} note="cessions" />
         <MetricCard label="Transferts" value={formatEuro(totalTransfers)} note="entre comptes" />
       </div>
 
@@ -465,27 +493,36 @@ function TransactionsPage({
   );
 }
 
-function CashTransactionForm({
+function TransactionForm({
   accounts,
   onCancel,
   onCreated,
+  securities,
 }: {
   accounts: DashboardData["accounts"];
   onCancel: () => void;
   onCreated: () => Promise<void>;
+  securities: DbSecurity[];
 }) {
   const today = new Date().toISOString().slice(0, 10);
   const firstAccountId = accounts[0]?.id ?? "";
   const secondAccountId = accounts[1]?.id ?? firstAccountId;
+  const firstSecurityId = securities[0]?.id ?? "";
 
-  const [transactionType, setTransactionType] = useState<"deposit" | "withdrawal" | "transfer">("deposit");
+  const [transactionType, setTransactionType] = useState<TransactionFormType>("deposit");
   const [date, setDate] = useState(today);
   const [fromAccountId, setFromAccountId] = useState(firstAccountId);
   const [toAccountId, setToAccountId] = useState(secondAccountId);
+  const [accountId, setAccountId] = useState(secondAccountId);
+  const [securityId, setSecurityId] = useState(firstSecurityId);
   const [amount, setAmount] = useState("100");
+  const [fees, setFees] = useState("0");
   const [note, setNote] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const isTrade = transactionType === "buy" || transactionType === "sell";
+  const selectedSecurity = securities.find((security) => security.id === securityId);
 
   useEffect(() => {
     if (!fromAccountId && firstAccountId) {
@@ -495,49 +532,120 @@ function CashTransactionForm({
     if (!toAccountId && secondAccountId) {
       setToAccountId(secondAccountId);
     }
-  }, [firstAccountId, fromAccountId, secondAccountId, toAccountId]);
+
+    if (!accountId && secondAccountId) {
+      setAccountId(secondAccountId);
+    }
+
+    if (!securityId && firstSecurityId) {
+      setSecurityId(firstSecurityId);
+    }
+  }, [accountId, firstAccountId, firstSecurityId, fromAccountId, secondAccountId, securityId, toAccountId]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    const parsedAmount = Number(amount.replace(",", "."));
+    setFormError(null);
+
+    if (isTrade) {
+      const tradeTransactionType = transactionType as "buy" | "sell";
+      const parsedAmount = parseDecimal(amount);
+      const parsedFees = parseDecimal(fees || "0");
+      const currentPrice = selectedSecurity?.current_price ?? 0;
+
+      if (!accountId) {
+        setFormError("Choisis un compte.");
+        return;
+      }
+
+      if (!securityId || !selectedSecurity) {
+        setFormError("Choisis un actif.");
+        return;
+      }
+
+      if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+        setFormError("Le montant de l’ordre doit être un nombre supérieur à 0.");
+        return;
+      }
+
+      if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
+        setFormError("L’actif sélectionné n’a pas encore de cours connu. On ajoutera la recherche de cours à l’étape suivante.");
+        return;
+      }
+
+      if (!Number.isFinite(parsedFees) || parsedFees < 0) {
+        setFormError("Les frais doivent être un nombre positif ou égal à 0.");
+        return;
+      }
+
+      const computedQuantity = parsedAmount / currentPrice;
+
+      const payload: NewTradeTransaction = {
+        transaction_type: tradeTransactionType,
+        date,
+        account_id: accountId,
+        security_id: securityId,
+        quantity: computedQuantity,
+        price: currentPrice,
+        fees: parsedFees,
+        note: note.trim() ? note.trim() : null,
+      };
+
+      setIsSubmitting(true);
+
+      try {
+        await createTradeTransaction(payload);
+        await onCreated();
+        setAmount("100");
+        setFees("0");
+        setNote("");
+      } catch (error) {
+        setFormError(String(error));
+      } finally {
+        setIsSubmitting(false);
+      }
+
+      return;
+    }
+
+    const cashTransactionType = transactionType as CashTransactionType;
+    const parsedAmount = parseDecimal(amount);
 
     if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
       setFormError("Le montant doit être un nombre supérieur à 0.");
       return;
     }
 
-    if (transactionType === "deposit" && !toAccountId) {
+    if (cashTransactionType === "deposit" && !toAccountId) {
       setFormError("Choisis un compte de destination.");
       return;
     }
 
-    if (transactionType === "withdrawal" && !fromAccountId) {
+    if (cashTransactionType === "withdrawal" && !fromAccountId) {
       setFormError("Choisis un compte source.");
       return;
     }
 
-    if (transactionType === "transfer" && (!fromAccountId || !toAccountId)) {
+    if (cashTransactionType === "transfer" && (!fromAccountId || !toAccountId)) {
       setFormError("Choisis un compte source et un compte de destination.");
       return;
     }
 
-    if (transactionType === "transfer" && fromAccountId === toAccountId) {
+    if (cashTransactionType === "transfer" && fromAccountId === toAccountId) {
       setFormError("Le compte source et le compte de destination doivent être différents.");
       return;
     }
 
     const payload: NewCashTransaction = {
-      transaction_type: transactionType,
+      transaction_type: cashTransactionType,
       date,
       amount: parsedAmount,
       note: note.trim() ? note.trim() : null,
-      from_account_id: transactionType === "deposit" ? null : fromAccountId,
-      to_account_id: transactionType === "withdrawal" ? null : toAccountId,
+      from_account_id: cashTransactionType === "deposit" ? null : fromAccountId,
+      to_account_id: cashTransactionType === "withdrawal" ? null : toAccountId,
     };
 
     setIsSubmitting(true);
-    setFormError(null);
 
     try {
       await createCashTransaction(payload);
@@ -555,8 +663,8 @@ function CashTransactionForm({
     <article className="card transaction-form-card">
       <div className="transactions-header">
         <div>
-          <h2>Ajouter une transaction cash</h2>
-          <p>Première version : dépôt, retrait et transfert. Les achats/ventes viendront après.</p>
+          <h2>Ajouter une transaction</h2>
+          <p>Dépôt, retrait, transfert, achat et vente. Pour les achats/ventes, saisis le montant total de l’ordre.</p>
         </div>
         <span className="status-pill connected">Écriture SQLite</span>
       </div>
@@ -564,10 +672,12 @@ function CashTransactionForm({
       <form className="transaction-form" onSubmit={handleSubmit}>
         <label>
           Type
-          <select value={transactionType} onChange={(event) => setTransactionType(event.target.value as "deposit" | "withdrawal" | "transfer")}>
+          <select value={transactionType} onChange={(event) => setTransactionType(event.target.value as TransactionFormType)}>
             <option value="deposit">Dépôt</option>
             <option value="withdrawal">Retrait</option>
             <option value="transfer">Transfert</option>
+            <option value="buy">Achat</option>
+            <option value="sell">Vente</option>
           </select>
         </label>
 
@@ -576,43 +686,87 @@ function CashTransactionForm({
           <input type="date" value={date} onChange={(event) => setDate(event.target.value)} />
         </label>
 
-        {transactionType !== "deposit" ? (
-          <label>
-            Compte source
-            <select value={fromAccountId} onChange={(event) => setFromAccountId(event.target.value)}>
-              {accounts.map((account) => (
-                <option key={account.id} value={account.id}>{account.name}</option>
-              ))}
-            </select>
-          </label>
-        ) : null}
+        {isTrade ? (
+          <>
+            <label>
+              Compte
+              <select value={accountId} onChange={(event) => setAccountId(event.target.value)}>
+                {accounts.map((account) => (
+                  <option key={account.id} value={account.id}>{account.name}</option>
+                ))}
+              </select>
+            </label>
 
-        {transactionType !== "withdrawal" ? (
-          <label>
-            Compte destination
-            <select value={toAccountId} onChange={(event) => setToAccountId(event.target.value)}>
-              {accounts.map((account) => (
-                <option key={account.id} value={account.id}>{account.name}</option>
-              ))}
-            </select>
-          </label>
-        ) : null}
+            <label>
+              Actif
+              <select value={securityId} onChange={(event) => setSecurityId(event.target.value)}>
+                {securities.map((security) => (
+                  <option key={security.id} value={security.id}>{security.name} · {security.ticker}</option>
+                ))}
+              </select>
+            </label>
 
-        <label>
-          Montant
-          <input inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="1000" />
-        </label>
+            <label>
+              Montant de l’ordre
+              <input inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="1000" />
+            </label>
+
+            <label>
+              Cours utilisé
+              <input value={selectedSecurity ? formatEuro(selectedSecurity.current_price) : "—"} readOnly />
+            </label>
+
+            <label>
+              Quantité estimée
+              <input value={selectedSecurity?.current_price ? formatQuantity(parseDecimal(amount) / selectedSecurity.current_price) : "—"} readOnly />
+            </label>
+
+            <label>
+              Frais
+              <input inputMode="decimal" value={fees} onChange={(event) => setFees(event.target.value)} placeholder="0" />
+            </label>
+          </>
+        ) : (
+          <>
+            {transactionType !== "deposit" ? (
+              <label>
+                Compte source
+                <select value={fromAccountId} onChange={(event) => setFromAccountId(event.target.value)}>
+                  {accounts.map((account) => (
+                    <option key={account.id} value={account.id}>{account.name}</option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+
+            {transactionType !== "withdrawal" ? (
+              <label>
+                Compte destination
+                <select value={toAccountId} onChange={(event) => setToAccountId(event.target.value)}>
+                  {accounts.map((account) => (
+                    <option key={account.id} value={account.id}>{account.name}</option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+
+            <label>
+              Montant
+              <input inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="1000" />
+            </label>
+          </>
+        )}
 
         <label className="form-note-field">
           Note
-          <input value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ex : virement mensuel vers PEA" />
+          <input value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ex : achat LVMH ou virement mensuel vers PEA" />
         </label>
 
         {formError ? <p className="form-error">{formError}</p> : null}
 
         <div className="form-actions">
           <button className="secondary-action" type="button" onClick={onCancel}>Annuler</button>
-          <button className="primary-action" type="submit" disabled={isSubmitting || accounts.length === 0}>
+          <button className="primary-action" type="submit" disabled={isSubmitting || accounts.length === 0 || (isTrade && securities.length === 0)}>
             {isSubmitting ? "Ajout..." : "Ajouter"}
           </button>
         </div>
@@ -712,6 +866,10 @@ function colorForBucket(bucket: string) {
   };
 
   return colors[bucket] ?? "#d1d5db";
+}
+
+function parseDecimal(value: string) {
+  return Number(value.replace(",", "."));
 }
 
 function formatSignedPercent(value: number) {

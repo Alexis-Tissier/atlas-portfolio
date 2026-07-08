@@ -71,12 +71,31 @@ export type DbTransaction = {
   note: string | null;
 };
 
+export type DbSecurity = {
+  id: string;
+  name: string;
+  ticker: string;
+  asset_class: string;
+  current_price: number;
+};
+
 export type NewCashTransaction = {
   transaction_type: "deposit" | "withdrawal" | "transfer";
   date: string;
   from_account_id?: string | null;
   to_account_id?: string | null;
   amount: number;
+  note?: string | null;
+};
+
+export type NewTradeTransaction = {
+  transaction_type: "buy" | "sell";
+  date: string;
+  account_id: string;
+  security_id: string;
+  quantity: number;
+  price: number;
+  fees: number;
   note?: string | null;
 };
 
@@ -96,6 +115,14 @@ export async function getTransactions() {
   return invoke<DbTransaction[]>("get_transactions");
 }
 
+export async function getSecurities() {
+  return invoke<DbSecurity[]>("get_securities");
+}
+
 export async function createCashTransaction(input: NewCashTransaction) {
   return invoke<string>("create_cash_transaction", { input });
+}
+
+export async function createTradeTransaction(input: NewTradeTransaction) {
+  return invoke<string>("create_trade_transaction", { input });
 }

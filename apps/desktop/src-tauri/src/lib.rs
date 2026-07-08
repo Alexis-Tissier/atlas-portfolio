@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -83,6 +83,15 @@ struct DbTransaction {
     note: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+struct DbSecurity {
+    id: String,
+    name: String,
+    ticker: String,
+    asset_class: String,
+    current_price: f64,
+}
+
 #[derive(Debug, Deserialize)]
 struct NewCashTransaction {
     transaction_type: String,
@@ -90,6 +99,18 @@ struct NewCashTransaction {
     from_account_id: Option<String>,
     to_account_id: Option<String>,
     amount: f64,
+    note: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NewTradeTransaction {
+    transaction_type: String,
+    date: String,
+    account_id: String,
+    security_id: String,
+    quantity: f64,
+    price: f64,
+    fees: f64,
     note: Option<String>,
 }
 
@@ -489,6 +510,277 @@ fn get_transactions() -> Result<Vec<DbTransaction>, String> {
 }
 
 #[tauri::command]
+fn get_securities() -> Result<Vec<DbSecurity>, String> {
+    let connection = open_database()?;
+
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT
+              s.id,
+              s.name,
+              s.ticker,
+              s.asset_class,
+              COALESCE(
+                (
+                  SELECT p.close_price
+                  FROM prices p
+                  WHERE p.security_id = s.id
+                  ORDER BY p.date DESC, p.created_at DESC
+                  LIMIT 1
+                ),
+                (
+                  SELECT pos.current_price
+                  FROM positions pos
+                  WHERE pos.security_id = s.id
+                  ORDER BY pos.updated_at DESC
+                  LIMIT 1
+                ),
+                0
+              ) AS current_price
+            FROM securities s
+            ORDER BY
+              CASE s.asset_class
+                WHEN 'ETF' THEN 1
+                WHEN 'Actions' THEN 2
+                WHEN 'Crypto' THEN 3
+                WHEN 'Cash' THEN 4
+                ELSE 99
+              END,
+              s.name
+            ",
+        )
+        .map_err(|error| format!("Erreur SQL securities : {error}"))?;
+
+    let rows = statement
+        .query_map([], |row| {
+            Ok(DbSecurity {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                ticker: row.get(2)?,
+                asset_class: row.get(3)?,
+                current_price: row.get(4)?,
+            })
+        })
+        .map_err(|error| format!("Erreur lecture securities : {error}"))?;
+
+    let mut securities = Vec::new();
+
+    for row in rows {
+        securities.push(row.map_err(|error| format!("Erreur conversion security : {error}"))?);
+    }
+
+    Ok(securities)
+}
+
+#[tauri::command]
+fn create_trade_transaction(input: NewTradeTransaction) -> Result<String, String> {
+    if input.date.trim().is_empty() {
+        return Err("La date est obligatoire.".to_string());
+    }
+
+    if !matches!(input.transaction_type.as_str(), "buy" | "sell") {
+        return Err("Cette commande accepte uniquement achat et vente.".to_string());
+    }
+
+    if input.account_id.trim().is_empty() {
+        return Err("Le compte est obligatoire.".to_string());
+    }
+
+    if input.security_id.trim().is_empty() {
+        return Err("L'actif est obligatoire.".to_string());
+    }
+
+    if input.quantity <= 0.0 {
+        return Err("La quantité doit être supérieure à 0.".to_string());
+    }
+
+    if input.price <= 0.0 {
+        return Err("Le prix unitaire doit être supérieur à 0.".to_string());
+    }
+
+    if input.fees < 0.0 {
+        return Err("Les frais ne peuvent pas être négatifs.".to_string());
+    }
+
+    let gross_amount = input.quantity * input.price;
+    let mut connection = open_database()?;
+    let sqlite_transaction = connection
+        .transaction()
+        .map_err(|error| format!("Impossible de démarrer la transaction SQLite : {error}"))?;
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("Erreur horloge système : {error}"))?
+        .as_millis();
+
+    let id = format!("tx-trade-{now}");
+    let note = input.note.filter(|value| !value.trim().is_empty());
+
+    match input.transaction_type.as_str() {
+        "buy" => {
+            update_account_cash(&sqlite_transaction, &input.account_id, -(gross_amount + input.fees))?;
+
+            let existing_position = sqlite_transaction
+                .query_row(
+                    "
+                    SELECT id, quantity, average_price, current_price
+                    FROM positions
+                    WHERE account_id = ?1 AND security_id = ?2
+                    ",
+                    params![input.account_id, input.security_id],
+                    |row| Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, f64>(1)?,
+                        row.get::<_, f64>(2)?,
+                        row.get::<_, f64>(3)?,
+                    )),
+                )
+                .optional()
+                .map_err(|error| format!("Erreur recherche position : {error}"))?;
+
+            if let Some((position_id, old_quantity, old_average_price, old_current_price)) = existing_position {
+                let old_cost = old_quantity * old_average_price;
+                let new_quantity = old_quantity + input.quantity;
+                let new_average_price = (old_cost + gross_amount + input.fees) / new_quantity;
+
+                // Important : le prix saisi dans une transaction d'achat est le prix d'exécution.
+                // Il ne doit pas remplacer le dernier cours connu, sinon tout l'historique de la position
+                // est revalorisé au prix de l'ordre et le patrimoine part en vrille.
+                sqlite_transaction
+                    .execute(
+                        "
+                        UPDATE positions
+                        SET quantity = ?1,
+                            average_price = ?2,
+                            current_price = ?3,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?4
+                        ",
+                        params![new_quantity, new_average_price, old_current_price, position_id],
+                    )
+                    .map_err(|error| format!("Erreur mise à jour position : {error}"))?;
+            } else {
+                let position_id = format!("pos-{now}");
+                let average_price = (gross_amount + input.fees) / input.quantity;
+
+                sqlite_transaction
+                    .execute(
+                        "
+                        INSERT INTO positions (
+                          id,
+                          account_id,
+                          security_id,
+                          quantity,
+                          average_price,
+                          current_price
+                        )
+                        VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                        ",
+                        params![position_id, input.account_id, input.security_id, input.quantity, average_price, input.price],
+                    )
+                    .map_err(|error| format!("Erreur création position : {error}"))?;
+            }
+        }
+        "sell" => {
+            let existing_position = sqlite_transaction
+                .query_row(
+                    "
+                    SELECT id, quantity, average_price, current_price
+                    FROM positions
+                    WHERE account_id = ?1 AND security_id = ?2
+                    ",
+                    params![input.account_id, input.security_id],
+                    |row| Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, f64>(1)?,
+                        row.get::<_, f64>(2)?,
+                        row.get::<_, f64>(3)?,
+                    )),
+                )
+                .optional()
+                .map_err(|error| format!("Erreur recherche position : {error}"))?;
+
+            let Some((position_id, old_quantity, old_average_price, old_current_price)) = existing_position else {
+                return Err("Impossible de vendre : aucune position existante pour cet actif dans ce compte.".to_string());
+            };
+
+            if input.quantity > old_quantity + 0.0000001 {
+                return Err(format!(
+                    "Quantité insuffisante : position actuelle {old_quantity:.4}, vente demandée {requested:.4}.",
+                    requested = input.quantity
+                ));
+            }
+
+            let new_quantity = old_quantity - input.quantity;
+
+            if new_quantity <= 0.0000001 {
+                sqlite_transaction
+                    .execute("DELETE FROM positions WHERE id = ?1", params![position_id])
+                    .map_err(|error| format!("Erreur suppression position : {error}"))?;
+            } else {
+                sqlite_transaction
+                    .execute(
+                        "
+                        UPDATE positions
+                        SET quantity = ?1,
+                            average_price = ?2,
+                            current_price = ?3,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?4
+                        ",
+                        params![new_quantity, old_average_price, old_current_price, position_id],
+                    )
+                    .map_err(|error| format!("Erreur réduction position : {error}"))?;
+            }
+
+            update_account_cash(&sqlite_transaction, &input.account_id, gross_amount - input.fees)?;
+        }
+        _ => unreachable!(),
+    }
+
+    sqlite_transaction
+        .execute(
+            "
+            INSERT INTO transactions (
+              id,
+              date,
+              type,
+              from_account_id,
+              to_account_id,
+              account_id,
+              security_id,
+              quantity,
+              price,
+              fees,
+              amount,
+              note
+            )
+            VALUES (?1, ?2, ?3, NULL, NULL, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            ",
+            params![
+                id,
+                input.date,
+                input.transaction_type,
+                input.account_id,
+                input.security_id,
+                input.quantity,
+                input.price,
+                input.fees,
+                gross_amount,
+                note
+            ],
+        )
+        .map_err(|error| format!("Erreur insertion transaction achat/vente : {error}"))?;
+
+    sqlite_transaction
+        .commit()
+        .map_err(|error| format!("Erreur validation SQLite : {error}"))?;
+
+    Ok(id)
+}
+
+#[tauri::command]
 fn create_cash_transaction(input: NewCashTransaction) -> Result<String, String> {
     if input.date.trim().is_empty() {
         return Err("La date est obligatoire.".to_string());
@@ -608,7 +900,9 @@ pub fn run() {
             get_portfolio_overview,
             get_dashboard_data,
             get_transactions,
-            create_cash_transaction
+            get_securities,
+            create_cash_transaction,
+            create_trade_transaction
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
