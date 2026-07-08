@@ -7,6 +7,7 @@ import {
   createSecurityFromOnlineResult,
   createTradeTransaction,
   getDashboardData,
+  getPositionsPage,
   getSecurities,
   getTransactions,
   searchOnlineAssets,
@@ -17,6 +18,7 @@ import {
   type NewCashTransaction,
   type NewTradeTransaction,
   type PriceUpdateSummary,
+  type PositionPageRow,
   type OnlineAssetSearchResult,
 } from "./lib/tauriApi";
 
@@ -40,8 +42,10 @@ function App() {
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [transactions, setTransactions] = useState<DbTransaction[]>([]);
   const [securities, setSecurities] = useState<DbSecurity[]>([]);
+  const [positionsPageRows, setPositionsPageRows] = useState<PositionPageRow[]>([]);
   const [databaseError, setDatabaseError] = useState<string | null>(null);
   const [transactionsError, setTransactionsError] = useState<string | null>(null);
+  const [positionsError, setPositionsError] = useState<string | null>(null);
   const [priceUpdateSummary, setPriceUpdateSummary] = useState<PriceUpdateSummary | null>(null);
   const [priceUpdateError, setPriceUpdateError] = useState<string | null>(null);
   const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
@@ -70,6 +74,15 @@ function App() {
       setSecurities(data);
     } catch (error) {
       console.error(error);
+    }
+
+    try {
+      const data = await getPositionsPage();
+      setPositionsPageRows(data);
+      setPositionsError(null);
+    } catch (error) {
+      console.error(error);
+      setPositionsError(String(error));
     }
   }
 
@@ -197,7 +210,9 @@ function App() {
           </div>
         </header>
 
-        {currentPage === "Transactions" ? (
+        {currentPage === "Positions" ? (
+          <PositionsPage positions={positionsPageRows} positionsError={positionsError} />
+        ) : currentPage === "Transactions" ? (
           <TransactionsPage
             accounts={accounts}
             onTransactionCreated={refreshData}
@@ -275,7 +290,7 @@ function DashboardPage({
 
               {priceUpdateSummary ? (
                 <p className="muted price-refresh-note">
-                  Dernière mise à jour : {priceUpdateSummary.updated_at} · {priceUpdateSummary.updated_count} cours OK{priceUpdateSummary.error_count ? ` · ${priceUpdateSummary.error_count} erreur(s)` : ""}
+                  Dernière mise à jour : {priceUpdateSummary.updated_at} · {priceUpdateSummary.updated_count} mis à jour{priceUpdateSummary.error_count ? ` · ${priceUpdateSummary.error_count} conservé(s)` : ""}
                 </p>
               ) : null}
 
@@ -449,6 +464,85 @@ function DashboardPage({
           </article>
         </aside>
       </div>
+    </section>
+  );
+}
+
+
+function PositionsPage({
+  positions,
+  positionsError,
+}: {
+  positions: PositionPageRow[];
+  positionsError: string | null;
+}) {
+  const totalValue = positions.reduce((sum, position) => sum + position.value, 0);
+  const totalCost = positions.reduce((sum, position) => sum + position.cost, 0);
+  const totalPerformance = totalValue - totalCost;
+  const suspiciousPositions = positions.filter((position) => position.price_warning);
+
+  return (
+    <section className="page">
+      <div className="title-block page-title-row">
+        <div>
+          <h1>Positions</h1>
+          <p>Vue de contrôle des quantités, cours, valeurs et performances par actif.</p>
+        </div>
+      </div>
+
+      <div className="transaction-summary-grid positions-summary-grid">
+        <MetricCard label="Valeur positions" value={formatEuro(totalValue)} note="hors cash" />
+        <MetricCard label="Prix de revient" value={formatEuro(totalCost)} note="coût estimé" />
+        <MetricCard label="Perf. latente" value={formatEuro(totalPerformance)} note={formatSignedPercent(totalCost > 0 ? (totalPerformance / totalCost) * 100 : 0)} />
+        <MetricCard label="À vérifier" value={String(suspiciousPositions.length)} note="cours suspects" />
+      </div>
+
+      <article className="card transactions-card positions-table-card">
+        <div className="transactions-header">
+          <div>
+            <h2>Positions ouvertes</h2>
+            <p>Cette page sert à repérer immédiatement un cours aberrant après une mise à jour.</p>
+          </div>
+          <span className="status-pill connected">Positions</span>
+        </div>
+
+        {positionsError ? <p className="error-text">{positionsError}</p> : null}
+
+        <table className="transactions-table positions-table">
+          <thead>
+            <tr>
+              <th>Actif</th>
+              <th>Ticker</th>
+              <th>Compte</th>
+              <th>Classe</th>
+              <th>Quantité</th>
+              <th>PRU</th>
+              <th>Cours</th>
+              <th>Valeur</th>
+              <th>Perf.</th>
+              <th>Alerte</th>
+            </tr>
+          </thead>
+          <tbody>
+            {positions.map((position) => (
+              <tr key={position.position_id} className={position.price_warning ? "position-row-warning" : undefined}>
+                <td>{position.security_name}</td>
+                <td>{position.ticker}</td>
+                <td>{position.account_name}</td>
+                <td>{position.asset_class}</td>
+                <td>{formatQuantity(position.quantity)}</td>
+                <td>{formatEuro(position.average_price)}</td>
+                <td>{formatEuro(position.current_price)}</td>
+                <td className="amount-cell">{formatEuro(position.value)}</td>
+                <td className={position.performance_amount >= 0 ? "positive" : "negative"}>
+                  {formatEuro(position.performance_amount)} ({formatSignedPercent(position.performance_percent)})
+                </td>
+                <td>{position.price_warning ? <span className="warning-badge">À vérifier</span> : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </article>
     </section>
   );
 }

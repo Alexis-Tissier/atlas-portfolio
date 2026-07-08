@@ -142,7 +142,30 @@ struct PriceUpdateSummary {
     errors: Vec<PriceUpdateError>,
 }
 
+#[derive(Debug, Serialize)]
+struct PositionPageRow {
+    position_id: String,
+    account_name: String,
+    security_name: String,
+    ticker: String,
+    asset_class: String,
+    quantity: f64,
+    average_price: f64,
+    current_price: f64,
+    value: f64,
+    cost: f64,
+    performance_amount: f64,
+    performance_percent: f64,
+    price_warning: Option<String>,
+}
+
 #[derive(Debug)]
+
+struct PriceQuote {
+    price: f64,
+    source: String,
+}
+
 struct OpenSecurityForPriceUpdate {
     id: String,
     name: String,
@@ -321,7 +344,7 @@ fn sanitize_security_id(symbol: &str, now: u128) -> String {
     format!("sec-online-{cleaned}-{now}")
 }
 
-fn fetch_latest_price(symbol: &str) -> Result<f64, String> {
+fn fetch_latest_price_from_alpha_vantage(symbol: &str) -> Result<f64, String> {
     let json = alpha_vantage_request(&[
         ("function", "GLOBAL_QUOTE".to_string()),
         ("symbol", symbol.trim().to_string()),
@@ -340,6 +363,106 @@ fn fetch_latest_price(symbol: &str) -> Result<f64, String> {
     price_text
         .parse::<f64>()
         .map_err(|error| format!("Prix Alpha Vantage invalide ({price_text}) : {error}"))
+}
+
+fn fetch_latest_price_from_yahoo(symbol: &str) -> Result<f64, String> {
+    let symbol = symbol.trim();
+
+    if symbol.is_empty() {
+        return Err("Symbole Yahoo vide.".to_string());
+    }
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(12))
+        .build()
+        .map_err(|error| format!("Impossible de créer le client HTTP Yahoo : {error}"))?;
+
+    let json = client
+        .get(format!("https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"))
+        .query(&[("range", "1d"), ("interval", "1d")])
+        .send()
+        .map_err(|error| format!("Erreur réseau Yahoo Finance : {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Erreur HTTP Yahoo Finance : {error}"))?
+        .json::<Value>()
+        .map_err(|error| format!("Réponse Yahoo Finance illisible : {error}"))?;
+
+    let chart = json
+        .get("chart")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "Yahoo Finance n'a pas renvoyé de bloc chart.".to_string())?;
+
+    if let Some(error_value) = chart.get("error") {
+        if !error_value.is_null() {
+            return Err(format!("Yahoo Finance : {error_value}"));
+        }
+    }
+
+    let result = chart
+        .get("result")
+        .and_then(Value::as_array)
+        .and_then(|items| items.first())
+        .ok_or_else(|| "Yahoo Finance n'a pas renvoyé de résultat exploitable.".to_string())?;
+
+    if let Some(price) = result
+        .get("meta")
+        .and_then(|meta| meta.get("regularMarketPrice"))
+        .and_then(Value::as_f64)
+        .filter(|value| *value > 0.0)
+    {
+        return Ok(price);
+    }
+
+    let close_values = result
+        .get("indicators")
+        .and_then(|indicators| indicators.get("quote"))
+        .and_then(Value::as_array)
+        .and_then(|quotes| quotes.first())
+        .and_then(|quote| quote.get("close"))
+        .and_then(Value::as_array)
+        .ok_or_else(|| "Yahoo Finance n'a pas renvoyé de dernier cours.".to_string())?;
+
+    close_values
+        .iter()
+        .rev()
+        .filter_map(Value::as_f64)
+        .find(|value| *value > 0.0)
+        .ok_or_else(|| "Yahoo Finance n'a pas renvoyé de cours positif.".to_string())
+}
+
+fn fetch_latest_price_with_source(symbol: &str) -> Result<PriceQuote, String> {
+    let yahoo_result = fetch_latest_price_from_yahoo(symbol);
+
+    if let Ok(price) = yahoo_result {
+        return Ok(PriceQuote {
+            price,
+            source: "yahoo".to_string(),
+        });
+    }
+
+    let yahoo_error = yahoo_result.err().unwrap_or_else(|| "Erreur Yahoo inconnue".to_string());
+    let alpha_result = fetch_latest_price_from_alpha_vantage(symbol);
+
+    if let Ok(price) = alpha_result {
+        return Ok(PriceQuote {
+            price,
+            source: "alpha_vantage".to_string(),
+        });
+    }
+
+    let alpha_error = alpha_result.err().unwrap_or_else(|| "Erreur Alpha Vantage inconnue".to_string());
+
+    Err(format!(
+        "Yahoo Finance indisponible ({yahoo_error}) puis Alpha Vantage indisponible ({alpha_error})"
+    ))
+}
+
+fn fetch_latest_price(symbol: &str) -> Result<f64, String> {
+    fetch_latest_price_with_source(symbol).map(|quote| quote.price)
+}
+
+fn is_suspicious_price_jump(old_price: f64, new_price: f64) -> bool {
+    old_price > 0.0 && (new_price > old_price * 3.0 || new_price < old_price / 3.0)
 }
 
 fn read_security_by_id(connection: &Connection, security_id: &str) -> Result<DbSecurity, String> {
@@ -927,6 +1050,83 @@ fn create_security(input: NewSecurityInput) -> Result<DbSecurity, String> {
     })
 }
 
+
+#[tauri::command]
+fn get_positions_page() -> Result<Vec<PositionPageRow>, String> {
+    let connection = open_database()?;
+
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT
+              p.id,
+              a.name AS account_name,
+              s.name AS security_name,
+              s.ticker,
+              s.asset_class,
+              p.quantity,
+              p.average_price,
+              p.current_price,
+              p.quantity * p.current_price AS value,
+              p.quantity * p.average_price AS cost
+            FROM positions p
+            JOIN securities s ON s.id = p.security_id
+            JOIN accounts a ON a.id = p.account_id
+            WHERE p.quantity > 0
+            ORDER BY value DESC
+            ",
+        )
+        .map_err(|error| format!("Erreur SQL page positions : {error}"))?;
+
+    let rows = statement
+        .query_map([], |row| {
+            let quantity: f64 = row.get(5)?;
+            let average_price: f64 = row.get(6)?;
+            let current_price: f64 = row.get(7)?;
+            let value: f64 = row.get(8)?;
+            let cost: f64 = row.get(9)?;
+            let performance_amount = value - cost;
+            let performance_percent = if cost > 0.0 {
+                (performance_amount / cost) * 100.0
+            } else {
+                0.0
+            };
+
+            let price_warning = if average_price > 0.0 && current_price > average_price * 3.0 {
+                Some("Cours très supérieur au prix moyen : à vérifier.".to_string())
+            } else if average_price > 0.0 && current_price < average_price / 3.0 {
+                Some("Cours très inférieur au prix moyen : à vérifier.".to_string())
+            } else {
+                None
+            };
+
+            Ok(PositionPageRow {
+                position_id: row.get(0)?,
+                account_name: row.get(1)?,
+                security_name: row.get(2)?,
+                ticker: row.get(3)?,
+                asset_class: row.get(4)?,
+                quantity,
+                average_price,
+                current_price,
+                value,
+                cost,
+                performance_amount,
+                performance_percent,
+                price_warning,
+            })
+        })
+        .map_err(|error| format!("Erreur lecture page positions : {error}"))?;
+
+    let mut positions = Vec::new();
+
+    for row in rows {
+        positions.push(row.map_err(|error| format!("Erreur conversion page position : {error}"))?);
+    }
+
+    Ok(positions)
+}
+
 #[tauri::command]
 fn search_online_assets(query: String) -> Result<Vec<OnlineAssetSearchResult>, String> {
     let query = query.trim();
@@ -1145,13 +1345,32 @@ fn update_open_position_prices() -> Result<PriceUpdateSummary, String> {
             continue;
         }
 
-        match fetch_latest_price(&security.ticker) {
+        match fetch_latest_price_with_source(&security.ticker) {
             Ok(new_price) if new_price > 0.0 => {
+                if security.old_price > 0.0 {
+                    let ratio = new_price / security.old_price;
+
+                    if !(0.33..=3.0).contains(&ratio) {
+                        skipped_count += 1;
+                        errors.push(PriceUpdateError {
+                            security_id: security.id,
+                            name: security.name,
+                            ticker: security.ticker,
+                            message: format!(
+                                "Variation suspecte ignorée : ancien cours {old:.4}, nouveau cours {new:.4}. Ancien cours conservé.",
+                                old = security.old_price,
+                                new = new_price
+                            ),
+                        });
+                        continue;
+                    }
+                }
+
                 connection
                     .execute(
                         "
                         INSERT INTO prices (security_id, date, close_price, currency, source)
-                        SELECT ?1, date('now'), ?2, currency, 'alpha_vantage'
+                        SELECT ?1, date('now'), ?2, currency, 'market_provider'
                         FROM securities
                         WHERE id = ?1
                         ON CONFLICT(security_id, date, source) DO UPDATE SET
@@ -1182,7 +1401,7 @@ fn update_open_position_prices() -> Result<PriceUpdateSummary, String> {
                     new_price,
                 });
             }
-            Ok(new_price) => {
+            Ok(PriceQuote { price: new_price, source: _source }) => {
                 skipped_count += 1;
                 errors.push(PriceUpdateError {
                     security_id: security.id,
@@ -1545,6 +1764,7 @@ pub fn run() {
             get_dashboard_data,
             get_transactions,
             get_securities,
+            get_positions_page,
             update_open_position_prices,
             create_security,
             search_online_assets,
