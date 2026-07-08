@@ -6,17 +6,20 @@ import {
   createCashTransaction,
   createSecurityFromOnlineResult,
   createTradeTransaction,
+  deleteTransaction,
   getDashboardData,
   getPositionsPage,
   getSecurities,
   getTransactions,
   searchOnlineAssets,
+  updateTransaction,
   updateOpenPositionPrices,
   type DashboardData,
   type DbSecurity,
   type DbTransaction,
   type NewCashTransaction,
   type NewTradeTransaction,
+  type UpdateTransactionInput,
   type PriceUpdateSummary,
   type PositionPageRow,
   type OnlineAssetSearchResult,
@@ -621,6 +624,28 @@ function TransactionsPage({
   transactionsError: string | null;
 }) {
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [editingTransaction, setEditingTransaction] = useState<DbTransaction | null>(null);
+
+  async function handleDeleteTransaction(transaction: DbTransaction) {
+    const confirmed = window.confirm(`Supprimer la transaction du ${formatDate(transaction.date)} ?`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    await deleteTransaction(transaction.id);
+    await onTransactionCreated();
+  }
+
+  function openCreateForm() {
+    setEditingTransaction(null);
+    setIsFormOpen(true);
+  }
+
+  function openEditForm(transaction: DbTransaction) {
+    setEditingTransaction(transaction);
+    setIsFormOpen(true);
+  }
 
   const totalDeposits = transactions
     .filter((transaction) => transaction.transaction_type === "deposit")
@@ -650,7 +675,7 @@ function TransactionsPage({
           <p>Suivi des achats, ventes, dépôts, retraits, dividendes, frais et transferts.</p>
         </div>
 
-        <button className="primary-action" onClick={() => setIsFormOpen((value) => !value)}>
+        <button className="primary-action" onClick={() => (isFormOpen ? setIsFormOpen(false) : openCreateForm())}>
           {isFormOpen ? "Fermer" : "+ Ajouter une transaction"}
         </button>
       </div>
@@ -658,12 +683,17 @@ function TransactionsPage({
       {isFormOpen ? (
         <TransactionForm
           accounts={accounts}
-          onCancel={() => setIsFormOpen(false)}
+          onCancel={() => {
+            setIsFormOpen(false);
+            setEditingTransaction(null);
+          }}
           onCreated={async () => {
             await onTransactionCreated();
             setIsFormOpen(false);
+            setEditingTransaction(null);
           }}
           securities={securities}
+          transactionToEdit={editingTransaction}
         />
       ) : null}
 
@@ -699,6 +729,7 @@ function TransactionsPage({
               <th>Frais</th>
               <th>Montant</th>
               <th>Note</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -713,6 +744,12 @@ function TransactionsPage({
                 <td>{transaction.fees ? formatEuro(transaction.fees) : "—"}</td>
                 <td className="amount-cell">{formatEuro(transaction.amount)}</td>
                 <td>{transaction.note ?? "—"}</td>
+                <td>
+                  <div className="row-actions">
+                    <button type="button" onClick={() => openEditForm(transaction)}>Modifier</button>
+                    <button type="button" onClick={() => handleDeleteTransaction(transaction)}>Supprimer</button>
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -727,11 +764,13 @@ function TransactionForm({
   onCancel,
   onCreated,
   securities,
+  transactionToEdit,
 }: {
   accounts: DashboardData["accounts"];
   onCancel: () => void;
   onCreated: () => Promise<void>;
   securities: DbSecurity[];
+  transactionToEdit: DbTransaction | null;
 }) {
   const today = new Date().toISOString().slice(0, 10);
   const firstAccountId = accounts[0]?.id ?? "";
@@ -757,6 +796,7 @@ function TransactionForm({
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const isEditing = transactionToEdit !== null;
   const isTrade = transactionType === "buy" || transactionType === "sell";
   const selectedSecurity = availableSecurities.find((security) => security.id === securityId);
   const normalizedAssetSearch = assetQuery.trim().toLowerCase();
@@ -774,6 +814,29 @@ function TransactionForm({
   useEffect(() => {
     setAvailableSecurities(securities);
   }, [securities]);
+
+  useEffect(() => {
+    if (!transactionToEdit) {
+      return;
+    }
+
+    setTransactionType(transactionToEdit.transaction_type as TransactionFormType);
+    setDate(transactionToEdit.date);
+    setFromAccountId(transactionToEdit.from_account_id ?? firstAccountId);
+    setToAccountId(transactionToEdit.to_account_id ?? secondAccountId);
+    setAccountId(transactionToEdit.account_id ?? secondAccountId);
+    setSecurityId(transactionToEdit.security_id ?? "");
+    setAmount(formatInputDecimal(transactionToEdit.amount));
+    setQuantity(transactionToEdit.quantity ? formatInputDecimal(transactionToEdit.quantity) : "1");
+    setPrice(transactionToEdit.price ? formatInputDecimal(transactionToEdit.price) : "");
+    setFees(formatInputDecimal(transactionToEdit.fees ?? 0));
+    setNote(transactionToEdit.note ?? "");
+
+    const matchingSecurity = securities.find((security) => security.id === transactionToEdit.security_id);
+    setAssetQuery(matchingSecurity ? `${matchingSecurity.name} · ${matchingSecurity.ticker}` : transactionToEdit.security_name ?? "");
+    setOnlineAssetResults([]);
+    setOnlineSearchError(null);
+  }, [firstAccountId, secondAccountId, securities, transactionToEdit]);
 
   useEffect(() => {
     if (!fromAccountId && firstAccountId) {
@@ -954,7 +1017,23 @@ function TransactionForm({
       setIsSubmitting(true);
 
       try {
-        await createTradeTransaction(payload);
+        if (isEditing && transactionToEdit) {
+          const updatePayload: UpdateTransactionInput = {
+            id: transactionToEdit.id,
+            transaction_type: tradeTransactionType,
+            date,
+            account_id: accountId,
+            security_id: securityId,
+            quantity: finalQuantity,
+            price: finalPrice,
+            fees: parsedFees,
+            note: note.trim() ? note.trim() : null,
+          };
+
+          await updateTransaction(updatePayload);
+        } else {
+          await createTradeTransaction(payload);
+        }
         await onCreated();
         setAmount("");
         setQuantity("1");
@@ -1010,7 +1089,21 @@ function TransactionForm({
     setIsSubmitting(true);
 
     try {
-      await createCashTransaction(payload);
+      if (isEditing && transactionToEdit) {
+        const updatePayload: UpdateTransactionInput = {
+          id: transactionToEdit.id,
+          transaction_type: cashTransactionType,
+          date,
+          amount: parsedAmount,
+          note: note.trim() ? note.trim() : null,
+          from_account_id: cashTransactionType === "deposit" ? null : fromAccountId,
+          to_account_id: cashTransactionType === "withdrawal" ? null : toAccountId,
+        };
+
+        await updateTransaction(updatePayload);
+      } else {
+        await createCashTransaction(payload);
+      }
       await onCreated();
       setAmount("");
       setNote("");
@@ -1025,10 +1118,10 @@ function TransactionForm({
     <article className="card transaction-form-card">
       <div className="transactions-header">
         <div>
-          <h2>Ajouter une transaction</h2>
+          <h2>{isEditing ? "Modifier la transaction" : "Ajouter une transaction"}</h2>
           <p>Dépôt, retrait, transfert, achat et vente. Pour les achats/ventes, montant, quantité et cours restent modifiables.</p>
         </div>
-        <span className="status-pill connected">Écriture SQLite</span>
+        <span className="status-pill connected">{isEditing ? "Édition" : "Ajout"}</span>
       </div>
 
       <form className="transaction-form" onSubmit={handleSubmit}>
@@ -1138,7 +1231,7 @@ function TransactionForm({
         <div className="form-actions">
           <button className="secondary-action" type="button" onClick={onCancel}>Annuler</button>
           <button className="primary-action" type="submit" disabled={isSubmitting || accounts.length === 0 || (isTrade && !securityId)}>
-            {isSubmitting ? "Ajout..." : "Ajouter"}
+            {isSubmitting ? (isEditing ? "Modification..." : "Ajout...") : isEditing ? "Modifier" : "Ajouter"}
           </button>
         </div>
       </form>

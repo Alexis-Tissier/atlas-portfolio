@@ -84,6 +84,10 @@ struct DbTransaction {
     id: String,
     date: String,
     transaction_type: String,
+    account_id: Option<String>,
+    from_account_id: Option<String>,
+    to_account_id: Option<String>,
+    security_id: Option<String>,
     account_name: Option<String>,
     from_account_name: Option<String>,
     to_account_name: Option<String>,
@@ -205,6 +209,38 @@ struct NewTradeTransaction {
     quantity: f64,
     price: f64,
     fees: f64,
+    note: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateTransactionInput {
+    id: String,
+    transaction_type: String,
+    date: String,
+    account_id: Option<String>,
+    from_account_id: Option<String>,
+    to_account_id: Option<String>,
+    security_id: Option<String>,
+    amount: Option<f64>,
+    quantity: Option<f64>,
+    price: Option<f64>,
+    fees: Option<f64>,
+    note: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct StoredTransaction {
+    id: String,
+    date: String,
+    transaction_type: String,
+    from_account_id: Option<String>,
+    to_account_id: Option<String>,
+    account_id: Option<String>,
+    security_id: Option<String>,
+    quantity: Option<f64>,
+    price: Option<f64>,
+    fees: f64,
+    amount: f64,
     note: Option<String>,
 }
 
@@ -1035,6 +1071,10 @@ fn get_transactions() -> Result<Vec<DbTransaction>, String> {
               t.id,
               t.date,
               t.type,
+              t.account_id,
+              t.from_account_id,
+              t.to_account_id,
+              t.security_id,
               a.name AS account_name,
               from_account.name AS from_account_name,
               to_account.name AS to_account_name,
@@ -1060,15 +1100,19 @@ fn get_transactions() -> Result<Vec<DbTransaction>, String> {
                 id: row.get(0)?,
                 date: row.get(1)?,
                 transaction_type: row.get(2)?,
-                account_name: row.get(3)?,
-                from_account_name: row.get(4)?,
-                to_account_name: row.get(5)?,
-                security_name: row.get(6)?,
-                amount: row.get(7)?,
-                quantity: row.get(8)?,
-                price: row.get(9)?,
-                fees: row.get(10)?,
-                note: row.get(11)?,
+                account_id: row.get(3)?,
+                from_account_id: row.get(4)?,
+                to_account_id: row.get(5)?,
+                security_id: row.get(6)?,
+                account_name: row.get(7)?,
+                from_account_name: row.get(8)?,
+                to_account_name: row.get(9)?,
+                security_name: row.get(10)?,
+                amount: row.get(11)?,
+                quantity: row.get(12)?,
+                price: row.get(13)?,
+                fees: row.get(14)?,
+                note: row.get(15)?,
             })
         })
         .map_err(|error| format!("Erreur lecture transactions : {error}"))?;
@@ -1772,6 +1816,463 @@ fn update_open_position_prices() -> Result<PriceUpdateSummary, String> {
     })
 }
 
+fn read_stored_transaction(
+    transaction: &rusqlite::Transaction,
+    transaction_id: &str,
+) -> Result<StoredTransaction, String> {
+    transaction
+        .query_row(
+            "
+            SELECT
+              id,
+              date,
+              type,
+              from_account_id,
+              to_account_id,
+              account_id,
+              security_id,
+              quantity,
+              price,
+              fees,
+              amount,
+              note
+            FROM transactions
+            WHERE id = ?1
+            ",
+            params![transaction_id],
+            |row| {
+                Ok(StoredTransaction {
+                    id: row.get(0)?,
+                    date: row.get(1)?,
+                    transaction_type: row.get(2)?,
+                    from_account_id: row.get(3)?,
+                    to_account_id: row.get(4)?,
+                    account_id: row.get(5)?,
+                    security_id: row.get(6)?,
+                    quantity: row.get(7)?,
+                    price: row.get(8)?,
+                    fees: row.get(9)?,
+                    amount: row.get(10)?,
+                    note: row.get(11)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(|error| format!("Erreur lecture transaction {transaction_id} : {error}"))?
+        .ok_or_else(|| format!("Transaction introuvable : {transaction_id}"))
+}
+
+fn latest_price_for_security(
+    transaction: &rusqlite::Transaction,
+    security_id: &str,
+    fallback_price: f64,
+) -> Result<f64, String> {
+    let latest_price = transaction
+        .query_row(
+            "
+            SELECT close_price
+            FROM prices
+            WHERE security_id = ?1
+            ORDER BY date DESC, created_at DESC
+            LIMIT 1
+            ",
+            params![security_id],
+            |row| row.get::<_, f64>(0),
+        )
+        .optional()
+        .map_err(|error| format!("Erreur lecture dernier cours {security_id} : {error}"))?;
+
+    Ok(latest_price
+        .unwrap_or(fallback_price)
+        .max(fallback_price)
+        .max(0.0))
+}
+
+fn adjust_position_quantity_and_cost(
+    transaction: &rusqlite::Transaction,
+    account_id: &str,
+    security_id: &str,
+    quantity_delta: f64,
+    cost_delta: f64,
+    fallback_price: f64,
+) -> Result<(), String> {
+    let existing_position = transaction
+        .query_row(
+            "
+            SELECT id, quantity, average_price, current_price
+            FROM positions
+            WHERE account_id = ?1 AND security_id = ?2
+            ",
+            params![account_id, security_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, f64>(1)?,
+                    row.get::<_, f64>(2)?,
+                    row.get::<_, f64>(3)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| format!("Erreur lecture position {security_id} : {error}"))?;
+
+    if let Some((position_id, old_quantity, old_average_price, old_current_price)) =
+        existing_position
+    {
+        let new_quantity = old_quantity + quantity_delta;
+
+        if new_quantity <= 0.00000001 {
+            transaction
+                .execute("DELETE FROM positions WHERE id = ?1", params![position_id])
+                .map_err(|error| format!("Erreur suppression position {security_id} : {error}"))?;
+            return Ok(());
+        }
+
+        let old_cost = old_quantity * old_average_price;
+        let new_cost = old_cost + cost_delta;
+        let new_average_price = if cost_delta.abs() > 0.00000001 && new_cost > 0.0 {
+            new_cost / new_quantity
+        } else {
+            old_average_price
+        };
+
+        let new_current_price = if old_current_price > 0.0 {
+            old_current_price
+        } else {
+            latest_price_for_security(transaction, security_id, fallback_price)?
+        };
+
+        transaction
+            .execute(
+                "
+                UPDATE positions
+                SET quantity = ?1,
+                    average_price = ?2,
+                    current_price = ?3,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?4
+                ",
+                params![
+                    new_quantity,
+                    new_average_price,
+                    new_current_price,
+                    position_id
+                ],
+            )
+            .map_err(|error| format!("Erreur mise à jour position {security_id} : {error}"))?;
+
+        return Ok(());
+    }
+
+    if quantity_delta <= 0.0 {
+        return Ok(());
+    }
+
+    let current_price = latest_price_for_security(transaction, security_id, fallback_price)?;
+    let average_price = if cost_delta > 0.0 {
+        cost_delta / quantity_delta
+    } else {
+        fallback_price
+    };
+    let position_id = format!("pos-{account_id}-{security_id}");
+
+    transaction
+        .execute(
+            "
+            INSERT INTO positions (
+              id,
+              account_id,
+              security_id,
+              quantity,
+              average_price,
+              current_price
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(id) DO UPDATE SET
+              quantity = excluded.quantity,
+              average_price = excluded.average_price,
+              current_price = excluded.current_price,
+              updated_at = CURRENT_TIMESTAMP
+            ",
+            params![
+                position_id,
+                account_id,
+                security_id,
+                quantity_delta,
+                average_price,
+                current_price
+            ],
+        )
+        .map_err(|error| format!("Erreur création position {security_id} : {error}"))?;
+
+    Ok(())
+}
+
+fn apply_stored_transaction_effect(
+    transaction: &rusqlite::Transaction,
+    stored: &StoredTransaction,
+    sign: f64,
+) -> Result<(), String> {
+    match stored.transaction_type.as_str() {
+        "deposit" => {
+            let to_account_id = stored
+                .to_account_id
+                .as_deref()
+                .ok_or_else(|| "Compte destination manquant pour le dépôt.".to_string())?;
+            update_account_cash(transaction, to_account_id, sign * stored.amount)?;
+        }
+        "withdrawal" => {
+            let from_account_id = stored
+                .from_account_id
+                .as_deref()
+                .ok_or_else(|| "Compte source manquant pour le retrait.".to_string())?;
+            update_account_cash(transaction, from_account_id, -sign * stored.amount)?;
+        }
+        "transfer" => {
+            let from_account_id = stored
+                .from_account_id
+                .as_deref()
+                .ok_or_else(|| "Compte source manquant pour le transfert.".to_string())?;
+            let to_account_id = stored
+                .to_account_id
+                .as_deref()
+                .ok_or_else(|| "Compte destination manquant pour le transfert.".to_string())?;
+            update_account_cash(transaction, from_account_id, -sign * stored.amount)?;
+            update_account_cash(transaction, to_account_id, sign * stored.amount)?;
+        }
+        "buy" => {
+            let account_id = stored
+                .account_id
+                .as_deref()
+                .ok_or_else(|| "Compte manquant pour l'achat.".to_string())?;
+            let security_id = stored
+                .security_id
+                .as_deref()
+                .ok_or_else(|| "Actif manquant pour l'achat.".to_string())?;
+            let quantity = stored
+                .quantity
+                .ok_or_else(|| "Quantité manquante pour l'achat.".to_string())?;
+            let price = stored
+                .price
+                .ok_or_else(|| "Prix manquant pour l'achat.".to_string())?;
+            let gross_amount = quantity * price;
+            let cash_amount = gross_amount + stored.fees;
+
+            update_account_cash(transaction, account_id, -sign * cash_amount)?;
+            adjust_position_quantity_and_cost(
+                transaction,
+                account_id,
+                security_id,
+                sign * quantity,
+                sign * cash_amount,
+                price,
+            )?;
+        }
+        "sell" => {
+            let account_id = stored
+                .account_id
+                .as_deref()
+                .ok_or_else(|| "Compte manquant pour la vente.".to_string())?;
+            let security_id = stored
+                .security_id
+                .as_deref()
+                .ok_or_else(|| "Actif manquant pour la vente.".to_string())?;
+            let quantity = stored
+                .quantity
+                .ok_or_else(|| "Quantité manquante pour la vente.".to_string())?;
+            let price = stored
+                .price
+                .ok_or_else(|| "Prix manquant pour la vente.".to_string())?;
+            let gross_amount = quantity * price;
+            let cash_amount = gross_amount - stored.fees;
+
+            update_account_cash(transaction, account_id, sign * cash_amount)?;
+            adjust_position_quantity_and_cost(
+                transaction,
+                account_id,
+                security_id,
+                -sign * quantity,
+                0.0,
+                price,
+            )?;
+        }
+        _ => {
+            return Err(format!(
+                "Type de transaction non pris en charge : {}",
+                stored.transaction_type
+            ))
+        }
+    }
+
+    Ok(())
+}
+
+fn stored_transaction_from_update_input(
+    input: UpdateTransactionInput,
+) -> Result<StoredTransaction, String> {
+    let transaction_type = input.transaction_type.trim().to_string();
+
+    if input.id.trim().is_empty() {
+        return Err("Identifiant de transaction obligatoire.".to_string());
+    }
+
+    if input.date.trim().is_empty() {
+        return Err("La date est obligatoire.".to_string());
+    }
+
+    if !matches!(
+        transaction_type.as_str(),
+        "deposit" | "withdrawal" | "transfer" | "buy" | "sell"
+    ) {
+        return Err("Type de transaction invalide.".to_string());
+    }
+
+    let fees = input.fees.unwrap_or(0.0);
+
+    if fees < 0.0 {
+        return Err("Les frais ne peuvent pas être négatifs.".to_string());
+    }
+
+    let amount = match transaction_type.as_str() {
+        "deposit" | "withdrawal" | "transfer" => {
+            let amount = input
+                .amount
+                .ok_or_else(|| "Montant obligatoire.".to_string())?;
+            if amount <= 0.0 {
+                return Err("Le montant doit être supérieur à 0.".to_string());
+            }
+            amount
+        }
+        "buy" => {
+            let quantity = input
+                .quantity
+                .ok_or_else(|| "Quantité obligatoire.".to_string())?;
+            let price = input.price.ok_or_else(|| "Prix obligatoire.".to_string())?;
+            if quantity <= 0.0 || price <= 0.0 {
+                return Err("Quantité et prix doivent être supérieurs à 0.".to_string());
+            }
+            quantity * price + fees
+        }
+        "sell" => {
+            let quantity = input
+                .quantity
+                .ok_or_else(|| "Quantité obligatoire.".to_string())?;
+            let price = input.price.ok_or_else(|| "Prix obligatoire.".to_string())?;
+            if quantity <= 0.0 || price <= 0.0 {
+                return Err("Quantité et prix doivent être supérieurs à 0.".to_string());
+            }
+            quantity * price - fees
+        }
+        _ => unreachable!(),
+    };
+
+    if transaction_type == "transfer" && input.from_account_id == input.to_account_id {
+        return Err(
+            "Le compte source et le compte de destination doivent être différents.".to_string(),
+        );
+    }
+
+    Ok(StoredTransaction {
+        id: input.id.trim().to_string(),
+        date: input.date,
+        transaction_type,
+        from_account_id: input
+            .from_account_id
+            .filter(|value| !value.trim().is_empty()),
+        to_account_id: input.to_account_id.filter(|value| !value.trim().is_empty()),
+        account_id: input.account_id.filter(|value| !value.trim().is_empty()),
+        security_id: input.security_id.filter(|value| !value.trim().is_empty()),
+        quantity: input.quantity,
+        price: input.price,
+        fees,
+        amount,
+        note: input.note.filter(|value| !value.trim().is_empty()),
+    })
+}
+
+#[tauri::command]
+fn update_transaction(input: UpdateTransactionInput) -> Result<String, String> {
+    let new_transaction = stored_transaction_from_update_input(input)?;
+    let mut connection = open_database()?;
+    let sqlite_transaction = connection
+        .transaction()
+        .map_err(|error| format!("Impossible de démarrer la transaction SQLite : {error}"))?;
+
+    let old_transaction = read_stored_transaction(&sqlite_transaction, &new_transaction.id)?;
+
+    apply_stored_transaction_effect(&sqlite_transaction, &old_transaction, -1.0)?;
+    apply_stored_transaction_effect(&sqlite_transaction, &new_transaction, 1.0)?;
+
+    sqlite_transaction
+        .execute(
+            "
+            UPDATE transactions
+            SET date = ?1,
+                type = ?2,
+                from_account_id = ?3,
+                to_account_id = ?4,
+                account_id = ?5,
+                security_id = ?6,
+                quantity = ?7,
+                price = ?8,
+                fees = ?9,
+                amount = ?10,
+                note = ?11,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?12
+            ",
+            params![
+                new_transaction.date,
+                new_transaction.transaction_type,
+                new_transaction.from_account_id,
+                new_transaction.to_account_id,
+                new_transaction.account_id,
+                new_transaction.security_id,
+                new_transaction.quantity,
+                new_transaction.price,
+                new_transaction.fees,
+                new_transaction.amount,
+                new_transaction.note,
+                new_transaction.id
+            ],
+        )
+        .map_err(|error| format!("Erreur mise à jour transaction : {error}"))?;
+
+    sqlite_transaction
+        .commit()
+        .map_err(|error| format!("Erreur validation SQLite : {error}"))?;
+
+    Ok("Transaction modifiée.".to_string())
+}
+
+#[tauri::command]
+fn delete_transaction(transaction_id: String) -> Result<String, String> {
+    if transaction_id.trim().is_empty() {
+        return Err("Identifiant de transaction obligatoire.".to_string());
+    }
+
+    let mut connection = open_database()?;
+    let sqlite_transaction = connection
+        .transaction()
+        .map_err(|error| format!("Impossible de démarrer la transaction SQLite : {error}"))?;
+
+    let old_transaction = read_stored_transaction(&sqlite_transaction, transaction_id.trim())?;
+    apply_stored_transaction_effect(&sqlite_transaction, &old_transaction, -1.0)?;
+
+    sqlite_transaction
+        .execute(
+            "DELETE FROM transactions WHERE id = ?1",
+            params![transaction_id.trim()],
+        )
+        .map_err(|error| format!("Erreur suppression transaction : {error}"))?;
+
+    sqlite_transaction
+        .commit()
+        .map_err(|error| format!("Erreur validation SQLite : {error}"))?;
+
+    Ok("Transaction supprimée.".to_string())
+}
+
 #[tauri::command]
 fn create_trade_transaction(input: NewTradeTransaction) -> Result<String, String> {
     if input.date.trim().is_empty() {
@@ -2144,6 +2645,8 @@ pub fn run() {
             create_security_from_online_result,
             create_cash_transaction,
             create_trade_transaction,
+            update_transaction,
+            delete_transaction,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

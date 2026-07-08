@@ -69,6 +69,10 @@ export type DbTransaction = {
   id: string;
   date: string;
   transaction_type: string;
+  account_id: string | null;
+  from_account_id: string | null;
+  to_account_id: string | null;
+  security_id: string | null;
   account_name: string | null;
   from_account_name: string | null;
   to_account_name: string | null;
@@ -78,6 +82,21 @@ export type DbTransaction = {
   price: number | null;
   fees: number;
   note: string | null;
+};
+
+export type UpdateTransactionInput = {
+  id: string;
+  transaction_type: "deposit" | "withdrawal" | "transfer" | "buy" | "sell";
+  date: string;
+  account_id?: string | null;
+  from_account_id?: string | null;
+  to_account_id?: string | null;
+  security_id?: string | null;
+  amount?: number | null;
+  quantity?: number | null;
+  price?: number | null;
+  fees?: number;
+  note?: string | null;
 };
 
 export type DbSecurity = {
@@ -227,4 +246,13 @@ export async function createSecurityFromOnlineResult(input: NewOnlineSecurity) {
 
 export async function updateOpenPositionPrices() {
   return invoke<PriceUpdateSummary>("update_open_position_prices");
+}
+
+
+export async function updateTransaction(input: UpdateTransactionInput) {
+  return invoke<string>("update_transaction", { input });
+}
+
+export async function deleteTransaction(transactionId: string) {
+  return invoke<string>("delete_transaction", { transactionId });
 }

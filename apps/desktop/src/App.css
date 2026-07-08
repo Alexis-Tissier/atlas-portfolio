@@ -385,3 +385,23 @@ td:first-child { color: #374151; font-weight: 600; }
 .chart-area svg {
   overflow: visible;
 }
+
+
+.row-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.row-actions button {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.row-actions button:hover {
+  background: var(--surface-muted);
+}
