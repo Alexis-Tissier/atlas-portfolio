@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build
+dist/
+build/
+target/
+
+# Tauri
+src-tauri/target/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Real personal data
+data/
+private/
+exports/
+imports/real/
+portfolio-performance/
+*.csv
+*.xlsx
+*.xml
+
+# Allow sample data later
+!samples/
+!samples/*.csv
+!samples/*.json
+
+# System
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
