@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import "./App.css";
 import {
   attentionPoints,
@@ -9,6 +10,12 @@ import {
   getPositionRows,
   getPortfolioSummary,
 } from "./core/portfolioCalculations";
+import {
+  getAccounts,
+  getPortfolioOverview,
+  type DbAccount,
+  type PortfolioOverviewRow,
+} from "./lib/tauriApi";
 
 const nav = [
   "Portefeuille",
@@ -22,10 +29,59 @@ const nav = [
   "Journal",
 ];
 
+type DatabaseState = {
+  status: "loading" | "ready" | "error";
+  accounts: DbAccount[];
+  overview: PortfolioOverviewRow[];
+  error?: string;
+};
+
 function App() {
   const summary = getPortfolioSummary();
   const positionRows = getPositionRows();
   const allocationRows = getAllocationRows();
+
+  const [databaseState, setDatabaseState] = useState<DatabaseState>({
+    status: "loading",
+    accounts: [],
+    overview: [],
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadDatabasePreview() {
+      try {
+        const [accounts, overview] = await Promise.all([
+          getAccounts(),
+          getPortfolioOverview(),
+        ]);
+
+        if (!cancelled) {
+          setDatabaseState({
+            status: "ready",
+            accounts,
+            overview,
+          });
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setDatabaseState({
+            status: "error",
+            accounts: [],
+            overview: [],
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    }
+
+    loadDatabasePreview();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <div className="app-shell">
@@ -47,7 +103,7 @@ function App() {
           <span className="green-dot" />
           <div>
             <strong>Données locales</strong>
-            <p>Dernière synchro : aujourd’hui, 09:34</p>
+            <p>SQLite local · données fictives</p>
           </div>
         </div>
       </aside>
@@ -203,6 +259,8 @@ function App() {
                 <p className="small-note">Votre allocation évolue avec le temps et vos apports.</p>
               </article>
 
+              <SQLiteStatusCard state={databaseState} />
+
               <article className="card contribution-card">
                 <h2>✧ Prochain apport</h2>
                 <p className="contribution-amount">{formatEuro(monthlyContribution.amount)} / mois</p>
@@ -234,6 +292,51 @@ function App() {
         </section>
       </main>
     </div>
+  );
+}
+
+function SQLiteStatusCard({ state }: { state: DatabaseState }) {
+  if (state.status === "loading") {
+    return (
+      <article className="card db-card">
+        <h2>Base SQLite locale</h2>
+        <p className="db-status loading">Connexion en cours...</p>
+      </article>
+    );
+  }
+
+  if (state.status === "error") {
+    return (
+      <article className="card db-card">
+        <h2>Base SQLite locale</h2>
+        <p className="db-status error">Erreur de connexion</p>
+        <p className="db-error">{state.error}</p>
+      </article>
+    );
+  }
+
+  const total = state.overview.reduce((sum, row) => sum + row.value, 0);
+  const visibleAccounts = state.accounts.filter((account) => account.include_in_net_worth);
+
+  return (
+    <article className="card db-card">
+      <div className="db-card-header">
+        <h2>Base SQLite locale</h2>
+        <span>Connectée</span>
+      </div>
+
+      <p className="db-total">{formatEuro(total)}</p>
+      <p className="muted">{visibleAccounts.length} comptes lus depuis SQLite.</p>
+
+      <div className="db-account-list">
+        {visibleAccounts.map((account) => (
+          <div className="db-account-row" key={account.id}>
+            <span>{account.name}</span>
+            <strong>{formatEuro(account.cash_balance)}</strong>
+          </div>
+        ))}
+      </div>
+    </article>
   );
 }
 

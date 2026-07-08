@@ -121,7 +121,6 @@ td:first-child { color: #374151; font-weight: 600; }
   grid-template-columns: 260px 1fr;
 }
 
-
 /* Remove fake macOS controls and placeholder sidebar logo */
 .window-dots,
 .small-logo {
@@ -130,4 +129,72 @@ td:first-child { color: #374151; font-weight: 600; }
 
 .sidebar {
   padding-top: 28px;
+}
+
+/* SQLite bridge */
+.db-card {
+  padding: 18px 20px;
+}
+
+.db-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.db-card-header span {
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: #e9f8ed;
+  color: #22935a;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.db-status {
+  margin: 12px 0 0;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.db-status.loading {
+  color: #647084;
+}
+
+.db-status.error {
+  color: #e05a63;
+}
+
+.db-error {
+  margin: 8px 0 0;
+  color: #7e8794;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.db-total {
+  margin: 14px 0 0;
+  color: #111827;
+  font-size: 24px;
+  font-weight: 780;
+  letter-spacing: -0.04em;
+}
+
+.db-account-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.db-account-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  color: #667085;
+  font-size: 12px;
+}
+
+.db-account-row strong {
+  color: #334155;
 }
