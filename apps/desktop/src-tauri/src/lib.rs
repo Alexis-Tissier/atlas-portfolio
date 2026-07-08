@@ -1346,38 +1346,34 @@ fn update_open_position_prices() -> Result<PriceUpdateSummary, String> {
         }
 
         match fetch_latest_price_with_source(&security.ticker) {
-            Ok(new_price) if new_price > 0.0 => {
-                if security.old_price > 0.0 {
-                    let ratio = new_price / security.old_price;
-
-                    if !(0.33..=3.0).contains(&ratio) {
-                        skipped_count += 1;
-                        errors.push(PriceUpdateError {
-                            security_id: security.id,
-                            name: security.name,
-                            ticker: security.ticker,
-                            message: format!(
-                                "Variation suspecte ignorée : ancien cours {old:.4}, nouveau cours {new:.4}. Ancien cours conservé.",
-                                old = security.old_price,
-                                new = new_price
-                            ),
-                        });
-                        continue;
-                    }
+            Ok(PriceQuote { price: new_price, source }) if new_price > 0.0 => {
+                if is_suspicious_price_jump(security.old_price, new_price) {
+                    skipped_count += 1;
+                    errors.push(PriceUpdateError {
+                        security_id: security.id,
+                        name: security.name,
+                        ticker: security.ticker,
+                        message: format!(
+                            "Variation suspecte ignorée : ancien cours {old:.4}, nouveau cours {new:.4}. Ancien cours conservé.",
+                            old = security.old_price,
+                            new = new_price
+                        ),
+                    });
+                    continue;
                 }
 
                 connection
                     .execute(
                         "
                         INSERT INTO prices (security_id, date, close_price, currency, source)
-                        SELECT ?1, date('now'), ?2, currency, 'market_provider'
+                        SELECT ?1, date('now'), ?2, currency, ?3
                         FROM securities
                         WHERE id = ?1
                         ON CONFLICT(security_id, date, source) DO UPDATE SET
                           close_price = excluded.close_price,
                           currency = excluded.currency
                         ",
-                        params![security.id, new_price],
+                        params![security.id, new_price, source],
                     )
                     .map_err(|error| format!("Erreur enregistrement cours {} : {error}", security.ticker))?;
 
