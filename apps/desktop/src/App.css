@@ -373,3 +373,15 @@ td:first-child { color: #374151; font-weight: 600; }
   white-space: normal;
   color: #8a5a00;
 }
+
+
+.sqlite-status-card .status-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.chart-area svg {
+  overflow: visible;
+}

@@ -51,6 +51,15 @@ struct DashboardAllocation {
 }
 
 #[derive(Debug, Serialize)]
+struct DashboardSnapshot {
+    date: String,
+    total_value: f64,
+    invested_capital: Option<f64>,
+    performance_amount: Option<f64>,
+    performance_percent: Option<f64>,
+}
+
+#[derive(Debug, Serialize)]
 struct DashboardAccount {
     id: String,
     name: String,
@@ -67,6 +76,7 @@ struct DashboardData {
     positions: Vec<DashboardPosition>,
     allocation: Vec<DashboardAllocation>,
     accounts: Vec<DashboardAccount>,
+    snapshots: Vec<DashboardSnapshot>,
 }
 
 #[derive(Debug, Serialize)]
@@ -967,6 +977,39 @@ fn get_dashboard_data() -> Result<DashboardData, String> {
         })
         .collect::<Vec<_>>();
 
+    let mut snapshot_statement = connection
+        .prepare(
+            "
+            SELECT
+              date,
+              total_value,
+              invested_capital,
+              performance_amount,
+              performance_percent
+            FROM portfolio_snapshots
+            ORDER BY date ASC
+            ",
+        )
+        .map_err(|error| format!("Erreur SQL portfolio_snapshots : {error}"))?;
+
+    let snapshot_rows = snapshot_statement
+        .query_map([], |row| {
+            Ok(DashboardSnapshot {
+                date: row.get(0)?,
+                total_value: row.get(1)?,
+                invested_capital: row.get(2)?,
+                performance_amount: row.get(3)?,
+                performance_percent: row.get(4)?,
+            })
+        })
+        .map_err(|error| format!("Erreur lecture portfolio_snapshots : {error}"))?;
+
+    let mut snapshots = Vec::new();
+
+    for row in snapshot_rows {
+        snapshots.push(row.map_err(|error| format!("Erreur conversion snapshot : {error}"))?);
+    }
+
     Ok(DashboardData {
         summary: DashboardSummary {
             total,
@@ -977,6 +1020,7 @@ fn get_dashboard_data() -> Result<DashboardData, String> {
         positions,
         allocation,
         accounts: dashboard_accounts,
+        snapshots,
     })
 }
 

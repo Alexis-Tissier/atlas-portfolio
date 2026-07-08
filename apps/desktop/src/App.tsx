@@ -164,6 +164,7 @@ function App() {
     : mockAllocationRows;
 
   const accounts = dashboardData?.accounts ?? [];
+  const chartSnapshots = dashboardData?.snapshots ?? [];
 
   return (
     <div className="app-shell">
@@ -188,8 +189,8 @@ function App() {
         <div className="local-data">
           <span className={dashboardData ? "green-dot" : "warning-dot"} />
           <div>
-            <strong>{dashboardData ? "SQLite connecté" : "Données locales"}</strong>
-            <p>{dashboardData ? "Base locale active" : "Mode fallback mock"}</p>
+            <strong>{dashboardData ? "Portefeuille local" : "Portefeuille local"}</strong>
+            <p>{dashboardData ? "Données à jour" : "Données de démonstration"}</p>
           </div>
         </div>
       </aside>
@@ -228,6 +229,7 @@ function App() {
             dashboardData={dashboardData}
             positionRows={positionRows}
             summary={summary}
+            snapshots={chartSnapshots}
             isUpdatingPrices={isUpdatingPrices}
             onPriceRefresh={() => refreshOpenPositionPrices(false)}
             priceUpdateError={priceUpdateError}
@@ -252,6 +254,7 @@ function DashboardPage({
   priceUpdateError,
   priceUpdateSummary,
   summary,
+  snapshots,
 }: {
   accounts: DashboardData["accounts"];
   allocationRows: { bucket: string; targetPercent: number; actualPercent?: number; differencePercent?: number; value?: number }[];
@@ -263,6 +266,7 @@ function DashboardPage({
   priceUpdateError: string | null;
   priceUpdateSummary: PriceUpdateSummary | null;
   summary: { total: number; performance_amount: number; performance_percent: number; start_date: string };
+  snapshots: DashboardData["snapshots"];
 }) {
   return (
     <section className="page">
@@ -311,36 +315,7 @@ function DashboardPage({
               </div>
             </div>
 
-            <div className="chart-area">
-              <div className="y-axis">
-                <span>60 k €</span>
-                <span>45 k €</span>
-                <span>30 k €</span>
-                <span>15 k €</span>
-                <span>0 €</span>
-              </div>
-
-              <svg viewBox="0 0 780 230" preserveAspectRatio="none">
-                <defs>
-                  <linearGradient id="fill" x1="0" x2="0" y1="0" y2="1">
-                    <stop offset="0%" stopColor="#7da7f5" stopOpacity="0.26" />
-                    <stop offset="100%" stopColor="#7da7f5" stopOpacity="0" />
-                  </linearGradient>
-                </defs>
-                <path d="M0 185 L50 170 L100 160 L150 142 L200 126 L250 116 L300 105 L350 91 L400 98 L450 82 L500 72 L550 61 L600 68 L650 47 L700 40 L740 31 L780 18 L780 230 L0 230 Z" fill="url(#fill)" />
-                <path d="M0 185 L50 170 L100 160 L150 142 L200 126 L250 116 L300 105 L350 91 L400 98 L450 82 L500 72 L550 61 L600 68 L650 47 L700 40 L740 31 L780 18" fill="none" stroke="#6f9df0" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-
-              <div className="months">
-                <span>Janv. 2024</span>
-                <span>Mars 2024</span>
-                <span>Mai 2024</span>
-                <span>Juil. 2024</span>
-                <span>Sept. 2024</span>
-                <span>Nov. 2024</span>
-                <span>Aujourd’hui</span>
-              </div>
-            </div>
+            <PortfolioChart snapshots={snapshots} currentTotal={summary.total} />
           </article>
 
           <article className="card milestones-card">
@@ -415,9 +390,9 @@ function DashboardPage({
 
           <article className="card sqlite-status-card">
             <div className="status-header">
-              <h2>Base SQLite locale</h2>
+              <h2>Mes portefeuilles</h2>
               <span className={dashboardData ? "status-pill connected" : "status-pill warning"}>
-                {dashboardData ? "Connectée" : "Fallback"}
+                {dashboardData ? "À jour" : "Démo"}
               </span>
             </div>
 
@@ -428,7 +403,7 @@ function DashboardPage({
                 <div className="account-line" key={account.id}>
                   <div>
                     <strong>{account.name}</strong>
-                    <span>{account.account_type}</span>
+                    <span>{labelForAccountType(account.account_type)}</span>
                   </div>
                   <p>{formatEuro(account.total_value)}</p>
                 </div>
@@ -465,6 +440,79 @@ function DashboardPage({
         </aside>
       </div>
     </section>
+  );
+}
+
+
+
+function PortfolioChart({
+  currentTotal,
+  snapshots,
+}: {
+  currentTotal: number;
+  snapshots: DashboardData["snapshots"];
+}) {
+  const data = (snapshots.length ? snapshots : [{ date: "Aujourd’hui", total_value: currentTotal }]).map((point) => ({
+    date: point.date,
+    value: point.total_value,
+  }));
+
+  const values = data.map((point) => point.value);
+  const maxValue = Math.max(...values, currentTotal, 1);
+  const minValue = Math.min(...values, 0);
+  const chartWidth = 780;
+  const chartHeight = 230;
+  const topPadding = 18;
+  const bottomPadding = 28;
+  const usableHeight = chartHeight - topPadding - bottomPadding;
+  const range = Math.max(maxValue - minValue, 1);
+
+  const points = data.map((point, index) => {
+    const x = data.length === 1 ? chartWidth / 2 : (index / (data.length - 1)) * chartWidth;
+    const y = topPadding + ((maxValue - point.value) / range) * usableHeight;
+    return { x, y };
+  });
+
+  const linePath = points
+    .map((point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
+    .join(" ");
+
+  const areaPath = `${linePath} L${chartWidth} ${chartHeight} L0 ${chartHeight} Z`;
+
+  const labelIndexes = data
+    .map((_, index) => index)
+    .filter((index) => {
+      if (data.length <= 5) return true;
+      return index === 0 || index === data.length - 1 || index % Math.ceil(data.length / 4) === 0;
+    });
+
+  const yLabels = [maxValue, maxValue * 0.75, maxValue * 0.5, maxValue * 0.25, 0];
+
+  return (
+    <div className="chart-area">
+      <div className="y-axis">
+        {yLabels.map((value) => (
+          <span key={value}>{formatCompactEuro(value)}</span>
+        ))}
+      </div>
+
+      <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} preserveAspectRatio="none" aria-label="Évolution du patrimoine">
+        <defs>
+          <linearGradient id="fill" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="#7da7f5" stopOpacity="0.26" />
+            <stop offset="100%" stopColor="#7da7f5" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <path d={areaPath} fill="url(#fill)" />
+        <path d={linePath} fill="none" stroke="#6f9df0" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+
+      <div className="months">
+        {labelIndexes.map((index) => (
+          <span key={`${data[index].date}-${index}`}>{formatChartDate(data[index].date)}</span>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -620,8 +668,9 @@ function TransactionsPage({
       ) : null}
 
       <div className="transaction-summary-grid">
-        <MetricCard label="Transactions" value={String(transactions.length)} note="lues depuis SQLite" />
+        <MetricCard label="Transactions" value={String(transactions.length)} note="enregistrées localement" />
         <MetricCard label="Dépôts" value={formatEuro(totalDeposits)} note="apports entrants" />
+        <MetricCard label="Retraits" value={formatEuro(totalWithdrawals)} note="sorties enregistrées" />
         <MetricCard label="Achats" value={formatEuro(totalBuys)} note="ordres exécutés" />
         <MetricCard label="Ventes" value={formatEuro(totalSells)} note="cessions" />
         <MetricCard label="Transferts" value={formatEuro(totalTransfers)} note="entre comptes" />
@@ -631,9 +680,9 @@ function TransactionsPage({
         <div className="transactions-header">
           <div>
             <h2>Journal des transactions</h2>
-            <p>Lecture directe de la table SQLite <code>transactions</code>.</p>
+            <p>Journal local des opérations enregistrées.</p>
           </div>
-          <span className="status-pill connected">SQLite</span>
+          <span className="status-pill connected">Journal</span>
         </div>
 
         {transactionsError ? <p className="error-text">{transactionsError}</p> : null}
@@ -1305,6 +1354,43 @@ function formatSignedPercent(value: number) {
 function formatUnsignedPercent(value: number) {
   return `${value.toFixed(1).replace(".", ",")} %`;
 }
+
+
+function labelForAccountType(accountType: string) {
+  const labels: Record<string, string> = {
+    current_account: "Compte courant",
+    pea: "PEA",
+    cto: "Compte-titres",
+    livret_a: "Livret A",
+    crypto_wallet: "Compte crypto",
+  };
+
+  return labels[accountType] ?? accountType;
+}
+
+function formatCompactEuro(value: number) {
+  if (value >= 1000) {
+    return `${Math.round(value / 1000)} k €`;
+  }
+
+  return formatEuro(value);
+}
+
+function formatChartDate(value: string) {
+  if (value === "Aujourd’hui") return value;
+
+  const date = new Date(`${value}T00:00:00`);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleDateString("fr-FR", {
+    month: "short",
+    year: "numeric",
+  });
+}
+
 
 function formatQuantity(value: number) {
   return new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 4 }).format(value);

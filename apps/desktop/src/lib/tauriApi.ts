@@ -39,6 +39,14 @@ export type DashboardAllocation = {
   difference_percent: number;
 };
 
+export type DashboardSnapshot = {
+  date: string;
+  total_value: number;
+  invested_capital: number | null;
+  performance_amount: number | null;
+  performance_percent: number | null;
+};
+
 export type DashboardAccount = {
   id: string;
   name: string;
@@ -54,6 +62,7 @@ export type DashboardData = {
   positions: DashboardPosition[];
   allocation: DashboardAllocation[];
   accounts: DashboardAccount[];
+  snapshots: DashboardSnapshot[];
 };
 
 export type DbTransaction = {
