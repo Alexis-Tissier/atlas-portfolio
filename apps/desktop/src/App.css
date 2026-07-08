@@ -135,3 +135,185 @@ td:first-child { color: #374151; font-weight: 600; }
 .form-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 10px; }
 .placeholder-card { padding: 22px; color: #6b7280; }
 .placeholder-card p { margin-bottom: 0; }
+
+
+/* Step 12 - local asset search and manual creation */
+.asset-search-field {
+  grid-column: span 2;
+}
+
+.asset-picker {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 8px;
+  margin-top: -6px;
+}
+
+.asset-option {
+  border: 1px solid #e1e5ea;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #334155;
+  cursor: pointer;
+  text-align: left;
+}
+
+.asset-option:hover,
+.asset-option.selected {
+  border-color: #8bb3f8;
+  background: #f4f8ff;
+}
+
+.asset-option strong {
+  font-size: 13px;
+}
+
+.asset-option span {
+  color: #7c8491;
+  font-size: 12px;
+}
+
+.empty-asset-result {
+  margin: 0;
+  color: #9aa3ad;
+  font-size: 12px;
+}
+
+.create-asset-toggle {
+  width: fit-content;
+  border: 1px dashed #c7d2e0;
+  border-radius: 10px;
+  padding: 9px 12px;
+  background: #fbfcfe;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.create-asset-panel {
+  grid-column: 1 / -1;
+  border: 1px solid #d9e7d8;
+  border-radius: 14px;
+  padding: 16px;
+  background: #fbfefb;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.create-asset-header {
+  grid-column: 1 / -1;
+}
+
+.create-asset-header strong {
+  display: block;
+  color: #253142;
+  font-size: 14px;
+}
+
+.create-asset-header span {
+  display: block;
+  margin-top: 4px;
+  color: #8b949f;
+  font-size: 12px;
+}
+
+.create-asset-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.asset-picker-field {
+  grid-column: span 2;
+  display: grid;
+  gap: 10px;
+}
+
+.asset-picker-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.asset-results-block {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #eef0f2;
+  border-radius: 10px;
+  background: #fbfbfa;
+}
+
+.asset-results-block.online {
+  background: #f7fbff;
+  border-color: #dceaff;
+}
+
+.asset-results-block > p {
+  margin: 0;
+  color: #7c8491;
+  font-size: 11px;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.asset-result-list {
+  display: grid;
+  gap: 6px;
+}
+
+.asset-result {
+  width: 100%;
+  min-height: 46px;
+  border: 1px solid #e4e7eb;
+  border-radius: 9px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #fff;
+  color: #334155;
+  text-align: left;
+  cursor: pointer;
+}
+
+.asset-result:hover {
+  border-color: #bfd4ff;
+  background: #fbfdff;
+}
+
+.asset-result.selected {
+  border-color: #8cb3ff;
+  background: #eef5ff;
+}
+
+.asset-result span {
+  display: grid;
+  gap: 3px;
+}
+
+.asset-result strong {
+  font-size: 12px;
+}
+
+.asset-result small {
+  color: #8b949f;
+  font-size: 11px;
+}
+
+.asset-result em {
+  color: #4b5563;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 750;
+  white-space: nowrap;
+}

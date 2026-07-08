@@ -1,8 +1,10 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
+use std::env;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Serialize, Clone)]
 struct DbAccount {
@@ -92,6 +94,26 @@ struct DbSecurity {
     current_price: f64,
 }
 
+#[derive(Debug, Serialize)]
+struct OnlineAssetSearchResult {
+    symbol: String,
+    name: String,
+    asset_class: String,
+    region: String,
+    currency: String,
+    source: String,
+    match_score: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct NewOnlineSecurity {
+    symbol: String,
+    name: String,
+    asset_class: String,
+    currency: String,
+    region: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct NewCashTransaction {
     transaction_type: String,
@@ -112,6 +134,15 @@ struct NewTradeTransaction {
     price: f64,
     fees: f64,
     note: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NewSecurityInput {
+    name: String,
+    ticker: String,
+    asset_class: String,
+    currency: String,
+    current_price: f64,
 }
 
 #[derive(Debug)]
@@ -147,6 +178,141 @@ fn database_path() -> Result<PathBuf, String> {
 fn open_database() -> Result<Connection, String> {
     let path = database_path()?;
     Connection::open(path).map_err(|error| format!("Impossible d'ouvrir SQLite : {error}"))
+}
+
+fn alpha_vantage_api_key() -> Result<String, String> {
+    env::var("ATLAS_ALPHA_VANTAGE_API_KEY").map_err(|_| {
+        "Clé Alpha Vantage manquante. Lance d'abord : export ATLAS_ALPHA_VANTAGE_API_KEY=\"ta_cle\"".to_string()
+    })
+}
+
+fn alpha_vantage_request(parameters: &[(&str, String)]) -> Result<Value, String> {
+    let api_key = alpha_vantage_api_key()?;
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(12))
+        .build()
+        .map_err(|error| format!("Impossible de créer le client HTTP : {error}"))?;
+
+    let mut request = client
+        .get("https://www.alphavantage.co/query")
+        .query(&[("apikey", api_key.as_str())]);
+
+    for (name, value) in parameters {
+        request = request.query(&[(*name, value.as_str())]);
+    }
+
+    let response = request
+        .send()
+        .map_err(|error| format!("Erreur réseau Alpha Vantage : {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Erreur HTTP Alpha Vantage : {error}"))?;
+
+    let json = response
+        .json::<Value>()
+        .map_err(|error| format!("Réponse Alpha Vantage illisible : {error}"))?;
+
+    if let Some(note) = json.get("Note").and_then(Value::as_str) {
+        return Err(format!("Limite Alpha Vantage atteinte : {note}"));
+    }
+
+    if let Some(info) = json.get("Information").and_then(Value::as_str) {
+        return Err(format!("Alpha Vantage : {info}"));
+    }
+
+    if let Some(error_message) = json.get("Error Message").and_then(Value::as_str) {
+        return Err(format!("Alpha Vantage : {error_message}"));
+    }
+
+    Ok(json)
+}
+
+fn alpha_asset_class(alpha_type: &str) -> String {
+    match alpha_type.to_lowercase().as_str() {
+        value if value.contains("etf") => "ETF".to_string(),
+        value if value.contains("crypto") || value.contains("digital") => "Crypto".to_string(),
+        _ => "Actions".to_string(),
+    }
+}
+
+fn sanitize_security_id(symbol: &str, now: u128) -> String {
+    let cleaned = symbol
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string();
+
+    format!("sec-online-{cleaned}-{now}")
+}
+
+fn fetch_latest_price(symbol: &str) -> Result<f64, String> {
+    let json = alpha_vantage_request(&[
+        ("function", "GLOBAL_QUOTE".to_string()),
+        ("symbol", symbol.trim().to_string()),
+    ])?;
+
+    let quote = json
+        .get("Global Quote")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "Alpha Vantage n'a pas renvoyé de cotation pour ce symbole.".to_string())?;
+
+    let price_text = quote
+        .get("05. price")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "Prix absent de la réponse Alpha Vantage.".to_string())?;
+
+    price_text
+        .parse::<f64>()
+        .map_err(|error| format!("Prix Alpha Vantage invalide ({price_text}) : {error}"))
+}
+
+fn read_security_by_id(connection: &Connection, security_id: &str) -> Result<DbSecurity, String> {
+    connection
+        .query_row(
+            "
+            SELECT
+              s.id,
+              s.name,
+              s.ticker,
+              s.asset_class,
+              COALESCE(
+                (
+                  SELECT p.close_price
+                  FROM prices p
+                  WHERE p.security_id = s.id
+                  ORDER BY p.date DESC, p.created_at DESC
+                  LIMIT 1
+                ),
+                (
+                  SELECT pos.current_price
+                  FROM positions pos
+                  WHERE pos.security_id = s.id
+                  ORDER BY pos.updated_at DESC
+                  LIMIT 1
+                ),
+                0
+              ) AS current_price
+            FROM securities s
+            WHERE s.id = ?1
+            ",
+            params![security_id],
+            |row| {
+                Ok(DbSecurity {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    ticker: row.get(2)?,
+                    asset_class: row.get(3)?,
+                    current_price: row.get(4)?,
+                })
+            },
+        )
+        .map_err(|error| format!("Erreur lecture actif {security_id} : {error}"))
 }
 
 fn read_accounts(connection: &Connection) -> Result<Vec<DbAccount>, String> {
@@ -574,6 +740,264 @@ fn get_securities() -> Result<Vec<DbSecurity>, String> {
 }
 
 #[tauri::command]
+fn create_security(input: NewSecurityInput) -> Result<DbSecurity, String> {
+    let name = input.name.trim();
+    let ticker = input.ticker.trim().to_uppercase();
+    let asset_class = input.asset_class.trim();
+    let currency = input.currency.trim().to_uppercase();
+
+    if name.is_empty() {
+        return Err("Le nom de l'actif est obligatoire.".to_string());
+    }
+
+    if ticker.is_empty() {
+        return Err("Le ticker est obligatoire.".to_string());
+    }
+
+    if !matches!(asset_class, "ETF" | "Actions" | "Crypto" | "Cash") {
+        return Err("Classe d'actif invalide. Choisis ETF, Actions, Crypto ou Cash.".to_string());
+    }
+
+    if currency.is_empty() {
+        return Err("La devise est obligatoire.".to_string());
+    }
+
+    if input.current_price <= 0.0 {
+        return Err("Le cours doit être supérieur à 0.".to_string());
+    }
+
+    let mut connection = open_database()?;
+
+    let duplicate = connection
+        .query_row(
+            "
+            SELECT id
+            FROM securities
+            WHERE lower(ticker) = lower(?1)
+               OR lower(name) = lower(?2)
+            LIMIT 1
+            ",
+            params![ticker, name],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("Erreur recherche doublon actif : {error}"))?;
+
+    if duplicate.is_some() {
+        return Err("Un actif avec ce nom ou ce ticker existe déjà.".to_string());
+    }
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("Erreur horloge système : {error}"))?
+        .as_millis();
+
+    let safe_ticker = ticker
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+
+    let id = format!("sec-manual-{safe_ticker}-{now}");
+
+    let sqlite_transaction = connection
+        .transaction()
+        .map_err(|error| format!("Impossible de démarrer la transaction SQLite : {error}"))?;
+
+    sqlite_transaction
+        .execute(
+            "
+            INSERT INTO securities (
+              id,
+              name,
+              ticker,
+              isin,
+              asset_class,
+              sector,
+              country,
+              currency
+            )
+            VALUES (?1, ?2, ?3, NULL, ?4, NULL, NULL, ?5)
+            ",
+            params![id, name, ticker, asset_class, currency],
+        )
+        .map_err(|error| format!("Erreur création actif : {error}"))?;
+
+    sqlite_transaction
+        .execute(
+            "
+            INSERT INTO prices (
+              security_id,
+              date,
+              close_price,
+              currency,
+              source
+            )
+            VALUES (?1, date('now'), ?2, ?3, 'manual')
+            ",
+            params![id, input.current_price, currency],
+        )
+        .map_err(|error| format!("Erreur création cours initial : {error}"))?;
+
+    sqlite_transaction
+        .commit()
+        .map_err(|error| format!("Erreur validation SQLite : {error}"))?;
+
+    Ok(DbSecurity {
+        id,
+        name: name.to_string(),
+        ticker,
+        asset_class: asset_class.to_string(),
+        current_price: input.current_price,
+    })
+}
+
+#[tauri::command]
+fn search_online_assets(query: String) -> Result<Vec<OnlineAssetSearchResult>, String> {
+    let query = query.trim();
+
+    if query.len() < 2 {
+        return Err("Tape au moins 2 caractères pour lancer la recherche.".to_string());
+    }
+
+    let json = alpha_vantage_request(&[
+        ("function", "SYMBOL_SEARCH".to_string()),
+        ("keywords", query.to_string()),
+    ])?;
+
+    let matches = json
+        .get("bestMatches")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "Alpha Vantage n'a renvoyé aucun résultat exploitable.".to_string())?;
+
+    let results = matches
+        .iter()
+        .take(12)
+        .filter_map(|item| {
+            let symbol = item.get("1. symbol")?.as_str()?.trim().to_string();
+            let name = item.get("2. name")?.as_str()?.trim().to_string();
+            let alpha_type = item.get("3. type").and_then(Value::as_str).unwrap_or("Equity");
+            let region = item.get("4. region").and_then(Value::as_str).unwrap_or("—").trim().to_string();
+            let currency = item.get("8. currency").and_then(Value::as_str).unwrap_or("EUR").trim().to_string();
+            let match_score = item
+                .get("9. matchScore")
+                .and_then(Value::as_str)
+                .and_then(|value| value.parse::<f64>().ok())
+                .unwrap_or(0.0);
+
+            Some(OnlineAssetSearchResult {
+                symbol,
+                name,
+                asset_class: alpha_asset_class(alpha_type),
+                region,
+                currency,
+                source: "alpha_vantage".to_string(),
+                match_score,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Ok(results)
+}
+
+#[tauri::command]
+fn create_security_from_online_result(input: NewOnlineSecurity) -> Result<DbSecurity, String> {
+    let symbol = input.symbol.trim().to_string();
+    let name = input.name.trim().to_string();
+    let asset_class = input.asset_class.trim().to_string();
+    let currency = input.currency.trim().to_string();
+
+    if symbol.is_empty() {
+        return Err("Le symbole est obligatoire.".to_string());
+    }
+
+    if name.is_empty() {
+        return Err("Le nom de l'actif est obligatoire.".to_string());
+    }
+
+    if !matches!(asset_class.as_str(), "ETF" | "Actions" | "Crypto" | "Cash") {
+        return Err("Classe d'actif invalide.".to_string());
+    }
+
+    let latest_price = fetch_latest_price(&symbol)?;
+
+    let mut connection = open_database()?;
+    let existing_security_id = connection
+        .query_row(
+            "SELECT id FROM securities WHERE UPPER(ticker) = UPPER(?1) LIMIT 1",
+            params![symbol],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("Erreur recherche actif existant : {error}"))?;
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("Erreur horloge système : {error}"))?
+        .as_millis();
+
+    let security_id = existing_security_id.unwrap_or_else(|| sanitize_security_id(&symbol, now));
+    let region = input.region.filter(|value| !value.trim().is_empty());
+
+    let sqlite_transaction = connection
+        .transaction()
+        .map_err(|error| format!("Impossible de démarrer la transaction SQLite : {error}"))?;
+
+    sqlite_transaction
+        .execute(
+            "
+            INSERT INTO securities (id, name, ticker, asset_class, country, currency)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(id) DO UPDATE SET
+              name = excluded.name,
+              ticker = excluded.ticker,
+              asset_class = excluded.asset_class,
+              country = excluded.country,
+              currency = excluded.currency,
+              updated_at = CURRENT_TIMESTAMP
+            ",
+            params![security_id, name, symbol, asset_class, region, currency],
+        )
+        .map_err(|error| format!("Erreur création actif : {error}"))?;
+
+    sqlite_transaction
+        .execute(
+            "
+            INSERT INTO prices (security_id, date, close_price, currency, source)
+            VALUES (?1, date('now'), ?2, ?3, 'alpha_vantage')
+            ON CONFLICT(security_id, date, source) DO UPDATE SET
+              close_price = excluded.close_price,
+              currency = excluded.currency
+            ",
+            params![security_id, latest_price, currency],
+        )
+        .map_err(|error| format!("Erreur enregistrement du cours : {error}"))?;
+
+    sqlite_transaction
+        .execute(
+            "
+            UPDATE positions
+            SET current_price = ?1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE security_id = ?2
+            ",
+            params![latest_price, security_id],
+        )
+        .map_err(|error| format!("Erreur mise à jour positions existantes : {error}"))?;
+
+    sqlite_transaction
+        .commit()
+        .map_err(|error| format!("Erreur validation SQLite : {error}"))?;
+
+    read_security_by_id(&connection, &security_id)
+}
+
+#[tauri::command]
 fn create_trade_transaction(input: NewTradeTransaction) -> Result<String, String> {
     if input.date.trim().is_empty() {
         return Err("La date est obligatoire.".to_string());
@@ -901,6 +1325,7 @@ pub fn run() {
             get_dashboard_data,
             get_transactions,
             get_securities,
+            create_security,
             create_cash_transaction,
             create_trade_transaction
         ])

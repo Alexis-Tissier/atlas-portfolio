@@ -79,6 +79,24 @@ export type DbSecurity = {
   current_price: number;
 };
 
+export type OnlineAssetSearchResult = {
+  symbol: string;
+  name: string;
+  asset_class: string;
+  region: string;
+  currency: string;
+  source: string;
+  match_score: number;
+};
+
+export type NewOnlineSecurity = {
+  symbol: string;
+  name: string;
+  asset_class: string;
+  currency: string;
+  region?: string | null;
+};
+
 export type NewCashTransaction = {
   transaction_type: "deposit" | "withdrawal" | "transfer";
   date: string;
@@ -97,6 +115,14 @@ export type NewTradeTransaction = {
   price: number;
   fees: number;
   note?: string | null;
+};
+
+export type NewSecurityInput = {
+  name: string;
+  ticker: string;
+  asset_class: "ETF" | "Actions" | "Crypto" | "Cash";
+  currency: string;
+  current_price: number;
 };
 
 export async function getAccounts() {
@@ -125,4 +151,16 @@ export async function createCashTransaction(input: NewCashTransaction) {
 
 export async function createTradeTransaction(input: NewTradeTransaction) {
   return invoke<string>("create_trade_transaction", { input });
+}
+
+export async function createSecurity(input: NewSecurityInput) {
+  return invoke<DbSecurity>("create_security", { input });
+}
+
+export async function searchOnlineAssets(query: string) {
+  return invoke<OnlineAssetSearchResult[]>("search_online_assets", { query });
+}
+
+export async function createSecurityFromOnlineResult(input: NewOnlineSecurity) {
+  return invoke<DbSecurity>("create_security_from_online_result", { input });
 }
