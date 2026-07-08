@@ -56,6 +56,21 @@ export type DashboardData = {
   accounts: DashboardAccount[];
 };
 
+export type DbTransaction = {
+  id: string;
+  date: string;
+  transaction_type: string;
+  account_name: string | null;
+  from_account_name: string | null;
+  to_account_name: string | null;
+  security_name: string | null;
+  amount: number;
+  quantity: number | null;
+  price: number | null;
+  fees: number;
+  note: string | null;
+};
+
 export async function getAccounts() {
   return invoke<DbAccount[]>("get_accounts");
 }
@@ -66,4 +81,8 @@ export async function getPortfolioOverview() {
 
 export async function getDashboardData() {
   return invoke<DashboardData>("get_dashboard_data");
+}
+
+export async function getTransactions() {
+  return invoke<DbTransaction[]>("get_transactions");
 }

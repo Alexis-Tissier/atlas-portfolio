@@ -66,6 +66,22 @@ struct DashboardData {
     accounts: Vec<DashboardAccount>,
 }
 
+#[derive(Debug, Serialize)]
+struct DbTransaction {
+    id: String,
+    date: String,
+    transaction_type: String,
+    account_name: Option<String>,
+    from_account_name: Option<String>,
+    to_account_name: Option<String>,
+    security_name: Option<String>,
+    amount: f64,
+    quantity: Option<f64>,
+    price: Option<f64>,
+    fees: f64,
+    note: Option<String>,
+}
+
 #[derive(Debug)]
 struct RawPosition {
     asset: String,
@@ -379,11 +395,74 @@ fn get_dashboard_data() -> Result<DashboardData, String> {
     })
 }
 
+#[tauri::command]
+fn get_transactions() -> Result<Vec<DbTransaction>, String> {
+    let connection = open_database()?;
+
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT
+              t.id,
+              t.date,
+              t.type,
+              a.name AS account_name,
+              from_account.name AS from_account_name,
+              to_account.name AS to_account_name,
+              s.name AS security_name,
+              t.amount,
+              t.quantity,
+              t.price,
+              t.fees,
+              t.note
+            FROM transactions t
+            LEFT JOIN accounts a ON a.id = t.account_id
+            LEFT JOIN accounts from_account ON from_account.id = t.from_account_id
+            LEFT JOIN accounts to_account ON to_account.id = t.to_account_id
+            LEFT JOIN securities s ON s.id = t.security_id
+            ORDER BY t.date DESC, t.created_at DESC
+            ",
+        )
+        .map_err(|error| format!("Erreur SQL transactions : {error}"))?;
+
+    let rows = statement
+        .query_map([], |row| {
+            Ok(DbTransaction {
+                id: row.get(0)?,
+                date: row.get(1)?,
+                transaction_type: row.get(2)?,
+                account_name: row.get(3)?,
+                from_account_name: row.get(4)?,
+                to_account_name: row.get(5)?,
+                security_name: row.get(6)?,
+                amount: row.get(7)?,
+                quantity: row.get(8)?,
+                price: row.get(9)?,
+                fees: row.get(10)?,
+                note: row.get(11)?,
+            })
+        })
+        .map_err(|error| format!("Erreur lecture transactions : {error}"))?;
+
+    let mut transactions = Vec::new();
+
+    for row in rows {
+        transactions.push(row.map_err(|error| format!("Erreur conversion transaction : {error}"))?);
+    }
+
+    Ok(transactions)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![get_accounts, get_portfolio_overview, get_dashboard_data])
+        .invoke_handler(tauri::generate_handler![
+            get_accounts,
+            get_portfolio_overview,
+            get_dashboard_data,
+            get_transactions
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
