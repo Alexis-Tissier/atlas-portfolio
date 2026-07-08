@@ -71,6 +71,15 @@ export type DbTransaction = {
   note: string | null;
 };
 
+export type NewCashTransaction = {
+  transaction_type: "deposit" | "withdrawal" | "transfer";
+  date: string;
+  from_account_id?: string | null;
+  to_account_id?: string | null;
+  amount: number;
+  note?: string | null;
+};
+
 export async function getAccounts() {
   return invoke<DbAccount[]>("get_accounts");
 }
@@ -85,4 +94,8 @@ export async function getDashboardData() {
 
 export async function getTransactions() {
   return invoke<DbTransaction[]>("get_transactions");
+}
+
+export async function createCashTransaction(input: NewCashTransaction) {
+  return invoke<string>("create_cash_transaction", { input });
 }

@@ -1,8 +1,15 @@
-import { useEffect, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import "./App.css";
 import { attentionPoints, monthlyContribution } from "./mocks/mockPortfolio";
 import { formatEuro, getAllocationRows, getPositionRows, getPortfolioSummary } from "./core/portfolioCalculations";
-import { getDashboardData, getTransactions, type DashboardData, type DbTransaction } from "./lib/tauriApi";
+import {
+  createCashTransaction,
+  getDashboardData,
+  getTransactions,
+  type DashboardData,
+  type DbTransaction,
+  type NewCashTransaction,
+} from "./lib/tauriApi";
 
 const nav = [
   "Portefeuille",
@@ -23,26 +30,28 @@ function App() {
   const [databaseError, setDatabaseError] = useState<string | null>(null);
   const [transactionsError, setTransactionsError] = useState<string | null>(null);
 
-  useEffect(() => {
-    getDashboardData()
-      .then((data) => {
-        setDashboardData(data);
-        setDatabaseError(null);
-      })
-      .catch((error) => {
-        console.error(error);
-        setDatabaseError(String(error));
-      });
+  async function refreshData() {
+    try {
+      const data = await getDashboardData();
+      setDashboardData(data);
+      setDatabaseError(null);
+    } catch (error) {
+      console.error(error);
+      setDatabaseError(String(error));
+    }
 
-    getTransactions()
-      .then((data) => {
-        setTransactions(data);
-        setTransactionsError(null);
-      })
-      .catch((error) => {
-        console.error(error);
-        setTransactionsError(String(error));
-      });
+    try {
+      const data = await getTransactions();
+      setTransactions(data);
+      setTransactionsError(null);
+    } catch (error) {
+      console.error(error);
+      setTransactionsError(String(error));
+    }
+  }
+
+  useEffect(() => {
+    refreshData();
   }, []);
 
   const mockSummary = getPortfolioSummary();
@@ -126,7 +135,12 @@ function App() {
         </header>
 
         {currentPage === "Transactions" ? (
-          <TransactionsPage transactions={transactions} transactionsError={transactionsError} />
+          <TransactionsPage
+            accounts={accounts}
+            onTransactionCreated={refreshData}
+            transactions={transactions}
+            transactionsError={transactionsError}
+          />
         ) : currentPage === "Portefeuille" ? (
           <DashboardPage
             accounts={accounts}
@@ -350,18 +364,24 @@ function DashboardPage({
 }
 
 function TransactionsPage({
+  accounts,
+  onTransactionCreated,
   transactions,
   transactionsError,
 }: {
+  accounts: DashboardData["accounts"];
+  onTransactionCreated: () => Promise<void>;
   transactions: DbTransaction[];
   transactionsError: string | null;
 }) {
+  const [isFormOpen, setIsFormOpen] = useState(false);
+
   const totalDeposits = transactions
     .filter((transaction) => transaction.transaction_type === "deposit")
     .reduce((sum, transaction) => sum + transaction.amount, 0);
 
-  const totalBuys = transactions
-    .filter((transaction) => transaction.transaction_type === "buy")
+  const totalWithdrawals = transactions
+    .filter((transaction) => transaction.transaction_type === "withdrawal")
     .reduce((sum, transaction) => sum + transaction.amount, 0);
 
   const totalTransfers = transactions
@@ -376,13 +396,26 @@ function TransactionsPage({
           <p>Suivi des achats, ventes, dépôts, retraits, dividendes, frais et transferts.</p>
         </div>
 
-        <button className="primary-action">+ Ajouter une transaction</button>
+        <button className="primary-action" onClick={() => setIsFormOpen((value) => !value)}>
+          {isFormOpen ? "Fermer" : "+ Ajouter une transaction"}
+        </button>
       </div>
+
+      {isFormOpen ? (
+        <CashTransactionForm
+          accounts={accounts}
+          onCancel={() => setIsFormOpen(false)}
+          onCreated={async () => {
+            await onTransactionCreated();
+            setIsFormOpen(false);
+          }}
+        />
+      ) : null}
 
       <div className="transaction-summary-grid">
         <MetricCard label="Transactions" value={String(transactions.length)} note="lues depuis SQLite" />
         <MetricCard label="Dépôts" value={formatEuro(totalDeposits)} note="apports entrants" />
-        <MetricCard label="Achats" value={formatEuro(totalBuys)} note="ordres d’achat" />
+        <MetricCard label="Retraits" value={formatEuro(totalWithdrawals)} note="sorties de cash" />
         <MetricCard label="Transferts" value={formatEuro(totalTransfers)} note="entre comptes" />
       </div>
 
@@ -429,6 +462,162 @@ function TransactionsPage({
         </table>
       </article>
     </section>
+  );
+}
+
+function CashTransactionForm({
+  accounts,
+  onCancel,
+  onCreated,
+}: {
+  accounts: DashboardData["accounts"];
+  onCancel: () => void;
+  onCreated: () => Promise<void>;
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const firstAccountId = accounts[0]?.id ?? "";
+  const secondAccountId = accounts[1]?.id ?? firstAccountId;
+
+  const [transactionType, setTransactionType] = useState<"deposit" | "withdrawal" | "transfer">("deposit");
+  const [date, setDate] = useState(today);
+  const [fromAccountId, setFromAccountId] = useState(firstAccountId);
+  const [toAccountId, setToAccountId] = useState(secondAccountId);
+  const [amount, setAmount] = useState("100");
+  const [note, setNote] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!fromAccountId && firstAccountId) {
+      setFromAccountId(firstAccountId);
+    }
+
+    if (!toAccountId && secondAccountId) {
+      setToAccountId(secondAccountId);
+    }
+  }, [firstAccountId, fromAccountId, secondAccountId, toAccountId]);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const parsedAmount = Number(amount.replace(",", "."));
+
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      setFormError("Le montant doit être un nombre supérieur à 0.");
+      return;
+    }
+
+    if (transactionType === "deposit" && !toAccountId) {
+      setFormError("Choisis un compte de destination.");
+      return;
+    }
+
+    if (transactionType === "withdrawal" && !fromAccountId) {
+      setFormError("Choisis un compte source.");
+      return;
+    }
+
+    if (transactionType === "transfer" && (!fromAccountId || !toAccountId)) {
+      setFormError("Choisis un compte source et un compte de destination.");
+      return;
+    }
+
+    if (transactionType === "transfer" && fromAccountId === toAccountId) {
+      setFormError("Le compte source et le compte de destination doivent être différents.");
+      return;
+    }
+
+    const payload: NewCashTransaction = {
+      transaction_type: transactionType,
+      date,
+      amount: parsedAmount,
+      note: note.trim() ? note.trim() : null,
+      from_account_id: transactionType === "deposit" ? null : fromAccountId,
+      to_account_id: transactionType === "withdrawal" ? null : toAccountId,
+    };
+
+    setIsSubmitting(true);
+    setFormError(null);
+
+    try {
+      await createCashTransaction(payload);
+      await onCreated();
+      setAmount("100");
+      setNote("");
+    } catch (error) {
+      setFormError(String(error));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  return (
+    <article className="card transaction-form-card">
+      <div className="transactions-header">
+        <div>
+          <h2>Ajouter une transaction cash</h2>
+          <p>Première version : dépôt, retrait et transfert. Les achats/ventes viendront après.</p>
+        </div>
+        <span className="status-pill connected">Écriture SQLite</span>
+      </div>
+
+      <form className="transaction-form" onSubmit={handleSubmit}>
+        <label>
+          Type
+          <select value={transactionType} onChange={(event) => setTransactionType(event.target.value as "deposit" | "withdrawal" | "transfer")}>
+            <option value="deposit">Dépôt</option>
+            <option value="withdrawal">Retrait</option>
+            <option value="transfer">Transfert</option>
+          </select>
+        </label>
+
+        <label>
+          Date
+          <input type="date" value={date} onChange={(event) => setDate(event.target.value)} />
+        </label>
+
+        {transactionType !== "deposit" ? (
+          <label>
+            Compte source
+            <select value={fromAccountId} onChange={(event) => setFromAccountId(event.target.value)}>
+              {accounts.map((account) => (
+                <option key={account.id} value={account.id}>{account.name}</option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+
+        {transactionType !== "withdrawal" ? (
+          <label>
+            Compte destination
+            <select value={toAccountId} onChange={(event) => setToAccountId(event.target.value)}>
+              {accounts.map((account) => (
+                <option key={account.id} value={account.id}>{account.name}</option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+
+        <label>
+          Montant
+          <input inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="1000" />
+        </label>
+
+        <label className="form-note-field">
+          Note
+          <input value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ex : virement mensuel vers PEA" />
+        </label>
+
+        {formError ? <p className="form-error">{formError}</p> : null}
+
+        <div className="form-actions">
+          <button className="secondary-action" type="button" onClick={onCancel}>Annuler</button>
+          <button className="primary-action" type="submit" disabled={isSubmitting || accounts.length === 0}>
+            {isSubmitting ? "Ajout..." : "Ajouter"}
+          </button>
+        </div>
+      </form>
+    </article>
   );
 }
 

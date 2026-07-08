@@ -1,7 +1,8 @@
-use rusqlite::Connection;
-use serde::Serialize;
+use rusqlite::{params, Connection};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Serialize, Clone)]
 struct DbAccount {
@@ -79,6 +80,16 @@ struct DbTransaction {
     quantity: Option<f64>,
     price: Option<f64>,
     fees: f64,
+    note: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NewCashTransaction {
+    transaction_type: String,
+    date: String,
+    from_account_id: Option<String>,
+    to_account_id: Option<String>,
+    amount: f64,
     note: Option<String>,
 }
 
@@ -203,6 +214,30 @@ fn read_raw_positions(connection: &Connection) -> Result<Vec<RawPosition>, Strin
     }
 
     Ok(positions)
+}
+
+fn update_account_cash(
+    transaction: &rusqlite::Transaction,
+    account_id: &str,
+    amount_delta: f64,
+) -> Result<(), String> {
+    let changed = transaction
+        .execute(
+            "
+            UPDATE accounts
+            SET cash_balance = cash_balance + ?1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?2
+            ",
+            params![amount_delta, account_id],
+        )
+        .map_err(|error| format!("Erreur mise à jour cash account {account_id} : {error}"))?;
+
+    if changed != 1 {
+        return Err(format!("Compte introuvable : {account_id}"));
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -453,6 +488,117 @@ fn get_transactions() -> Result<Vec<DbTransaction>, String> {
     Ok(transactions)
 }
 
+#[tauri::command]
+fn create_cash_transaction(input: NewCashTransaction) -> Result<String, String> {
+    if input.date.trim().is_empty() {
+        return Err("La date est obligatoire.".to_string());
+    }
+
+    if input.amount <= 0.0 {
+        return Err("Le montant doit être supérieur à 0.".to_string());
+    }
+
+    let transaction_type = input.transaction_type.as_str();
+
+    if !matches!(transaction_type, "deposit" | "withdrawal" | "transfer") {
+        return Err("Cette première version accepte uniquement dépôt, retrait et transfert.".to_string());
+    }
+
+    let mut connection = open_database()?;
+    let sqlite_transaction = connection
+        .transaction()
+        .map_err(|error| format!("Impossible de démarrer la transaction SQLite : {error}"))?;
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("Erreur horloge système : {error}"))?
+        .as_millis();
+
+    let id = format!("tx-cash-{now}");
+    let note = input.note.filter(|value| !value.trim().is_empty());
+
+    let (from_account_id, to_account_id, account_id) = match transaction_type {
+        "deposit" => {
+            let to_account_id = input
+                .to_account_id
+                .clone()
+                .ok_or_else(|| "Compte de destination obligatoire pour un dépôt.".to_string())?;
+
+            update_account_cash(&sqlite_transaction, &to_account_id, input.amount)?;
+
+            (None, Some(to_account_id.clone()), Some(to_account_id))
+        }
+        "withdrawal" => {
+            let from_account_id = input
+                .from_account_id
+                .clone()
+                .ok_or_else(|| "Compte source obligatoire pour un retrait.".to_string())?;
+
+            update_account_cash(&sqlite_transaction, &from_account_id, -input.amount)?;
+
+            (Some(from_account_id.clone()), None, Some(from_account_id))
+        }
+        "transfer" => {
+            let from_account_id = input
+                .from_account_id
+                .clone()
+                .ok_or_else(|| "Compte source obligatoire pour un transfert.".to_string())?;
+            let to_account_id = input
+                .to_account_id
+                .clone()
+                .ok_or_else(|| "Compte de destination obligatoire pour un transfert.".to_string())?;
+
+            if from_account_id == to_account_id {
+                return Err("Le compte source et le compte de destination doivent être différents.".to_string());
+            }
+
+            update_account_cash(&sqlite_transaction, &from_account_id, -input.amount)?;
+            update_account_cash(&sqlite_transaction, &to_account_id, input.amount)?;
+
+            (Some(from_account_id), Some(to_account_id), None)
+        }
+        _ => unreachable!(),
+    };
+
+    sqlite_transaction
+        .execute(
+            "
+            INSERT INTO transactions (
+              id,
+              date,
+              type,
+              from_account_id,
+              to_account_id,
+              account_id,
+              security_id,
+              quantity,
+              price,
+              fees,
+              amount,
+              note
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, NULL, NULL, 0, ?7, ?8)
+            ",
+            params![
+                id,
+                input.date,
+                transaction_type,
+                from_account_id,
+                to_account_id,
+                account_id,
+                input.amount,
+                note
+            ],
+        )
+        .map_err(|error| format!("Erreur insertion transaction : {error}"))?;
+
+    sqlite_transaction
+        .commit()
+        .map_err(|error| format!("Erreur validation SQLite : {error}"))?;
+
+    Ok(id)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -461,7 +607,8 @@ pub fn run() {
             get_accounts,
             get_portfolio_overview,
             get_dashboard_data,
-            get_transactions
+            get_transactions,
+            create_cash_transaction
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
