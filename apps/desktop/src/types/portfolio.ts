@@ -88,6 +88,31 @@ export type PositionRow = {
   rawWeight: number;
 };
 
+export type AllocationRow = {
+  bucket: AssetClass;
+  targetPercent: number;
+  value: number;
+  actualPercent: number;
+  differencePercent: number;
+};
+
+export type AccountSummary = {
+  id: string;
+  name: string;
+  type: AccountType;
+  cashBalance: number;
+  positionsValue: number;
+  totalValue: number;
+  weight: number;
+};
+
+export type PortfolioSummary = {
+  total: number;
+  performanceAmount: number;
+  performancePercent: number;
+  startDate: string;
+};
+
 export type AttentionPoint = {
   kind: "red" | "yellow" | "blue";
   text: string;

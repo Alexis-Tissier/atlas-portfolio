@@ -1,12 +1,14 @@
 import "./App.css";
 import {
-  allocationTargets,
   attentionPoints,
-  formatEuro,
-  getPositionRows,
-  getPortfolioSummary,
   monthlyContribution,
 } from "./mocks/mockPortfolio";
+import {
+  formatEuro,
+  getAllocationRows,
+  getPositionRows,
+  getPortfolioSummary,
+} from "./core/portfolioCalculations";
 
 const nav = [
   "Portefeuille",
@@ -23,6 +25,7 @@ const nav = [
 function App() {
   const summary = getPortfolioSummary();
   const positionRows = getPositionRows();
+  const allocationRows = getAllocationRows();
 
   return (
     <div className="app-shell">
@@ -186,12 +189,12 @@ function App() {
                 <div className="allocation-row">
                   <div className="donut" />
                   <div className="legend">
-                    {allocationTargets.map((target) => (
+                    {allocationRows.map((row) => (
                       <Legend
-                        key={target.bucket}
-                        color={colorForBucket(target.bucket)}
-                        label={target.bucket}
-                        value={`${target.targetPercent} %`}
+                        key={row.bucket}
+                        color={colorForBucket(row.bucket)}
+                        label={row.bucket}
+                        value={`${row.targetPercent} %`}
                       />
                     ))}
                   </div>
