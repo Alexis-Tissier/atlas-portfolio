@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import "./App.css";
-import { attentionPoints, monthlyContribution } from "./mocks/mockPortfolio";
+import { monthlyContribution } from "./mocks/mockPortfolio";
 import { formatEuro, getAllocationRows, getPositionRows, getPortfolioSummary } from "./core/portfolioCalculations";
 import {
   createCashTransaction,
@@ -576,33 +576,11 @@ function DashboardPage({
             </div>
           </article>
 
-          <article className="card contribution-card">
-            <h2>✧ Prochain apport</h2>
-            <p className="contribution-amount">{displayEuro(monthlyContribution.amount, isPrivacyMode)} / mois</p>
-            <p className="muted">Prochain virement : {monthlyContribution.nextDate}</p>
-            <p className="suggestion-title">Suggestion d’allocation ⓘ</p>
-            <p className="muted">Pour rester aligné sur votre cible, privilégiez :</p>
+          
 
-            {monthlyContribution.allocation.map((line) => (
-              <Allocation key={line.label} label={line.label} value={formatEuro(line.value)} color={line.color}
-                    isPrivacyMode={isPrivacyMode} />
-            ))}
+          
 
-            <button className="manual-button">⚙ Ajuster manuellement</button>
-          </article>
-
-          <article className="card attention-card">
-            <h2>♡ Points d’attention</h2>
-
-            {attentionPoints.map((point) => (
-              <Attention key={point.text} kind={point.kind} text={point.text} />
-            ))}
-          </article>
-
-          <article className="quote-card">
-            <p>La constance bat l’intensité. Restez aligné sur votre plan d’allocation et vos objectifs.</p>
-            <span>Atlas Portfolio</span>
-          </article>
+          
         </aside>
       </div>
     </section>
@@ -622,6 +600,16 @@ type PerformanceAnalytics = {
   twrPercent: number;
   twrSeries: PerformanceSeriesPoint[];
   externalFlowSeries: PerformanceSeriesPoint[];
+};
+
+type PerformanceBreakdownRow = {
+  label: string;
+  value: number;
+  cost: number;
+  performanceAmount: number;
+  performancePercent: number;
+  weight: number;
+  count: number;
 };
 
 function parsePerformanceDate(value: string) {
@@ -715,6 +703,42 @@ function buildPerformanceAnalytics(
     twrSeries,
     externalFlowSeries,
   };
+}
+
+
+function buildPerformanceBreakdown(
+  positions: PositionPageRow[],
+  totalPortfolioValue: number,
+  groupBy: "asset_class" | "account_name",
+): PerformanceBreakdownRow[] {
+  const rows = new Map<string, PerformanceBreakdownRow>();
+
+  for (const position of positions) {
+    const label = groupBy === "asset_class" ? position.asset_class : position.account_name;
+    const existing = rows.get(label) ?? {
+      label,
+      value: 0,
+      cost: 0,
+      performanceAmount: 0,
+      performancePercent: 0,
+      weight: 0,
+      count: 0,
+    };
+
+    existing.value += position.value;
+    existing.cost += position.cost;
+    existing.performanceAmount += position.performance_amount;
+    existing.count += 1;
+    rows.set(label, existing);
+  }
+
+  return [...rows.values()]
+    .map((row) => ({
+      ...row,
+      performancePercent: row.cost > 0 ? (row.performanceAmount / row.cost) * 100 : 0,
+      weight: totalPortfolioValue > 0 ? (row.value / totalPortfolioValue) * 100 : 0,
+    }))
+    .sort((left, right) => right.value - left.value);
 }
 
 function PerformanceMiniChart({
@@ -1713,6 +1737,9 @@ function PerformancePage({
   const winners = [...positions].sort((left, right) => right.performance_amount - left.performance_amount).slice(0, 3);
   const losers = [...positions].sort((left, right) => left.performance_amount - right.performance_amount).slice(0, 3);
   const performanceAnalytics = buildPerformanceAnalytics(summary.total, snapshots, transactions);
+  const classPerformanceRows = buildPerformanceBreakdown(positions, summary.total, "asset_class");
+  const accountPerformanceRows = buildPerformanceBreakdown(positions, summary.total, "account_name");
+  const linePerformanceRows = [...positions].sort((left, right) => right.performance_amount - left.performance_amount);
 
   return (
     <section className="page">
@@ -1800,6 +1827,118 @@ function PerformancePage({
             ))}
           </div>
         </article>
+
+        <article className="card performance-wide-card">
+          <div className="card-header">
+            <h2>Performance par classe</h2>
+            <span className="status-pill connected">Latent</span>
+          </div>
+
+          <table className="performance-breakdown-table">
+            <thead>
+              <tr>
+                <th>Classe</th>
+                <th>Lignes</th>
+                <th>Valeur</th>
+                <th>Prix de revient</th>
+                <th>Perf.</th>
+                <th>Perf. %</th>
+                <th>Poids</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {classPerformanceRows.map((row) => (
+                <tr key={row.label}>
+                  <td>{row.label}</td>
+                  <td>{row.count}</td>
+                  <td>{displayEuro(row.value, isPrivacyMode)}</td>
+                  <td>{displayEuro(row.cost, isPrivacyMode)}</td>
+                  <td className={row.performanceAmount >= 0 ? "positive" : "negative"}>{displayEuro(row.performanceAmount, isPrivacyMode)}</td>
+                  <td className={row.performanceAmount >= 0 ? "positive" : "negative"}>{formatSignedPercent(row.performancePercent)}</td>
+                  <td>{formatUnsignedPercent(row.weight)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </article>
+
+        <article className="card performance-wide-card">
+          <div className="card-header">
+            <h2>Performance par compte</h2>
+            <span className="status-pill connected">Enveloppes</span>
+          </div>
+
+          <table className="performance-breakdown-table">
+            <thead>
+              <tr>
+                <th>Compte</th>
+                <th>Lignes</th>
+                <th>Valeur</th>
+                <th>Prix de revient</th>
+                <th>Perf.</th>
+                <th>Perf. %</th>
+                <th>Poids</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {accountPerformanceRows.map((row) => (
+                <tr key={row.label}>
+                  <td>{row.label}</td>
+                  <td>{row.count}</td>
+                  <td>{displayEuro(row.value, isPrivacyMode)}</td>
+                  <td>{displayEuro(row.cost, isPrivacyMode)}</td>
+                  <td className={row.performanceAmount >= 0 ? "positive" : "negative"}>{displayEuro(row.performanceAmount, isPrivacyMode)}</td>
+                  <td className={row.performanceAmount >= 0 ? "positive" : "negative"}>{formatSignedPercent(row.performancePercent)}</td>
+                  <td>{formatUnsignedPercent(row.weight)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </article>
+
+        <article className="card performance-wide-card">
+          <div className="card-header">
+            <h2>Performance par ligne</h2>
+            <span className="status-pill connected">{linePerformanceRows.length} ligne(s)</span>
+          </div>
+
+          <table className="performance-breakdown-table">
+            <thead>
+              <tr>
+                <th>Actif</th>
+                <th>Compte</th>
+                <th>Classe</th>
+                <th>Valeur</th>
+                <th>Prix de revient</th>
+                <th>Perf.</th>
+                <th>Perf. %</th>
+                <th>Poids</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {linePerformanceRows.map((position) => {
+                const weight = summary.total > 0 ? (position.value / summary.total) * 100 : 0;
+
+                return (
+                  <tr key={position.position_id}>
+                    <td>{position.security_name}</td>
+                    <td>{position.account_name}</td>
+                    <td>{position.asset_class}</td>
+                    <td>{displayEuro(position.value, isPrivacyMode)}</td>
+                    <td>{displayEuro(position.cost, isPrivacyMode)}</td>
+                    <td className={position.performance_amount >= 0 ? "positive" : "negative"}>{displayEuro(position.performance_amount, isPrivacyMode)}</td>
+                    <td className={position.performance_amount >= 0 ? "positive" : "negative"}>{formatSignedPercent(position.performance_percent)}</td>
+                    <td>{formatUnsignedPercent(weight)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </article>
+
 
       </div>
     </section>
@@ -3420,36 +3559,6 @@ function AllocationLegend({
 }
 
 
-function Allocation({
-  color,
-  isPrivacyMode,
-  label,
-  value,
-}: {
-  color: string;
-  isPrivacyMode: boolean;
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="allocation-line">
-      <span style={{ background: color }} />
-      <p>{label}</p>
-      <strong>{displayText(value, isPrivacyMode)}</strong>
-    </div>
-  );
-}
-
-function Attention({ kind, text }: { kind: string; text: string }) {
-  return (
-    <div className="attention-line">
-      <span className={kind}>△</span>
-      <p>{text}</p>
-      <strong>›</strong>
-    </div>
-  );
-}
-
 
 
 const MASKED_AMOUNT = "••••••";
@@ -3461,12 +3570,6 @@ function displayEuro(value: number, isPrivacyMode: boolean) {
 function displayCompactEuro(value: number, isPrivacyMode: boolean) {
   return isPrivacyMode ? MASKED_AMOUNT : formatCompactEuro(value);
 }
-
-function displayText(value: string, isPrivacyMode: boolean) {
-  return isPrivacyMode ? MASKED_AMOUNT : value;
-}
-
-
 
 function percentOfTotal(value: number, total: number) {
   return total > 0 ? (value / total) * 100 : 0;
