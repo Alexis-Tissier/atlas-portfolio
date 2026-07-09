@@ -1988,6 +1988,7 @@ function PortfolioAuditPage({
   const [isCreatingOpeningAdjustments, setIsCreatingOpeningAdjustments] = useState(false);
   const auditItems = buildPortfolioAuditItems(accounts, positions, transactions, isPrivacyMode);
   const warningCount = auditItems.filter((item) => item.status === "warning").length;
+  const positionWarningCount = auditItems.filter((item) => item.kind === "position" && item.status === "warning").length;
   const okCount = auditItems.filter((item) => item.status === "ok").length;
   const reconstructedPositionCount = auditItems.filter((item) => item.kind === "position").length;
   const cashFlowCount = auditItems.filter((item) => item.kind === "cash").length;
@@ -2022,7 +2023,7 @@ function PortfolioAuditPage({
         <MetricCard label="Transactions" value={String(transactions.length)} note="lignes analysées" />
         <MetricCard label="Positions vérifiées" value={String(reconstructedPositionCount)} note="depuis le journal" />
         <MetricCard label="Éléments OK" value={String(okCount)} note="cohérents" />
-        <MetricCard label="Flux cash" value={String(cashFlowCount)} note="comptes détectés" />
+        <MetricCard label="Cash vérifié" value={String(cashFlowCount)} note="comptes analysés" />
         <MetricCard label="Alertes" value={String(warningCount)} note={warningCount === 0 ? "aucun écart bloquant" : "écarts à vérifier"} />
       </div>
 
@@ -2031,13 +2032,13 @@ function PortfolioAuditPage({
           <div>
             <h2>Diagnostic de cohérence</h2>
             <p>
-              Cette page ne modifie pas la base. Elle recalcule uniquement un état théorique depuis le journal
-              pour repérer les écarts avant une future reconstruction automatique.
+              Cette page ne modifie pas la base. Elle recalcule les positions et le cash depuis le journal
+              pour repérer les écarts avec l’état actuel du portefeuille.
             </p>
           </div>
 
           <div className="audit-header-actions">
-            {warningCount > 0 ? (
+            {positionWarningCount > 0 ? (
               <button
                 className="secondary-action"
                 disabled={isCreatingOpeningAdjustments}
@@ -2047,7 +2048,7 @@ function PortfolioAuditPage({
                 {isCreatingOpeningAdjustments ? "Création..." : "Créer les ajustements d’ouverture"}
               </button>
             ) : (
-              <span className="status-pill connected">Aucun ajustement nécessaire</span>
+              <span className="status-pill connected">Positions cohérentes</span>
             )}
 
             <span className={warningCount === 0 ? "status-pill connected" : "status-pill warning"}>
@@ -2279,20 +2280,25 @@ function buildPortfolioAuditItems(
   }
 
   for (const account of accounts) {
-    const flow = cashFlows.get(account.name) ?? 0;
+    const reconstructedCash = cashFlows.get(account.name) ?? 0;
+    const currentCash = account.cash_balance;
+    const difference = reconstructedCash - currentCash;
+    const isOk = Math.abs(difference) <= 0.01;
 
-    if (Math.abs(flow) <= 0.000001) {
+    if (Math.abs(reconstructedCash) <= 0.000001 && Math.abs(currentCash) <= 0.000001) {
       continue;
     }
 
     items.push({
       kind: "cash",
-      label: `Flux cash · ${account.name}`,
-      journalValue: displayEuro(flow, isPrivacyMode),
-      currentValue: "—",
-      difference: "—",
-      status: "info",
-      message: "Flux net reconstruit depuis les dépôts, retraits, transferts, achats et ventes. Comparaison au cash réel prévue à l’étape suivante.",
+      label: `Cash · ${account.name}`,
+      journalValue: displayEuro(reconstructedCash, isPrivacyMode),
+      currentValue: displayEuro(currentCash, isPrivacyMode),
+      difference: displayEuro(difference, isPrivacyMode),
+      status: isOk ? "ok" : "warning",
+      message: isOk
+        ? "Cash cohérent entre le journal de transactions et le solde actuel du compte."
+        : "Écart entre le cash reconstruit depuis le journal et le solde actuel. Il faudra ajouter un cash d’ouverture ou compléter les transactions historiques.",
     });
   }
 
