@@ -670,7 +670,7 @@ td:first-child { color: #374151; font-weight: 600; }
 
 
 .performance-summary-grid {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
 .performance-grid {
@@ -767,4 +767,61 @@ td:first-child { color: #374151; font-weight: 600; }
   margin: 6px 0 0;
   color: #8b949f;
   font-size: 12px;
+}
+
+
+.performance-mini-chart {
+  position: relative;
+  min-height: 205px;
+  margin-top: 16px;
+  padding-left: 72px;
+}
+
+.performance-mini-chart svg {
+  width: 100%;
+  height: 160px;
+  overflow: visible;
+}
+
+.mini-y-axis {
+  position: absolute;
+  top: 8px;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  width: 62px;
+  height: 132px;
+  color: #9aa3ad;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.mini-chart-line {
+  fill: none;
+  stroke: #6f9df0;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.mini-chart-baseline {
+  stroke: #eef0f2;
+  stroke-width: 2;
+}
+
+.mini-months {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  color: #9aa3ad;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.mini-chart-empty {
+  margin-top: 20px;
+  padding: 16px;
+  border: 1px dashed #d8dde3;
+  border-radius: 12px;
 }

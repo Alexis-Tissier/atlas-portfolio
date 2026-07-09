@@ -268,6 +268,7 @@ function App() {
             positions={positionsPageRows}
             snapshots={chartSnapshots}
             summary={summary}
+            transactions={transactions}
           />
         ) : currentPage === "Positions" ? (
           <PositionsPage positions={positionsPageRows} positionsError={positionsError} priceUpdateSummary={priceUpdateSummary} isPrivacyMode={isPrivacyMode} />
@@ -539,18 +540,182 @@ function DashboardPage({
 
 
 
+
+type PerformanceSeriesPoint = {
+  date: string;
+  value: number;
+};
+
+type PerformanceAnalytics = {
+  twrPercent: number;
+  twrSeries: PerformanceSeriesPoint[];
+  externalFlowSeries: PerformanceSeriesPoint[];
+};
+
+function parsePerformanceDate(value: string) {
+  const timestamp = new Date(value).getTime();
+
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function externalCashFlowAmount(transaction: DbTransaction) {
+  if (transaction.transaction_type === "deposit") {
+    return transaction.amount;
+  }
+
+  if (transaction.transaction_type === "withdrawal") {
+    return -transaction.amount;
+  }
+
+  return 0;
+}
+
+function buildPerformanceAnalytics(
+  currentTotal: number,
+  snapshots: DashboardData["snapshots"],
+  transactions: DbTransaction[],
+): PerformanceAnalytics {
+  const sortedSnapshots = [...snapshots]
+    .map((snapshot) => ({
+      date: snapshot.date,
+      value: snapshot.total_value,
+    }))
+    .sort((left, right) => parsePerformanceDate(left.date) - parsePerformanceDate(right.date));
+
+  if (sortedSnapshots.length === 0) {
+    sortedSnapshots.push({
+      date: new Date().toISOString().slice(0, 10),
+      value: currentTotal,
+    });
+  }
+
+  const flowTransactions = transactions
+    .map((transaction) => ({
+      date: transaction.date,
+      value: externalCashFlowAmount(transaction),
+    }))
+    .filter((flow) => Math.abs(flow.value) > 0.000001)
+    .sort((left, right) => parsePerformanceDate(left.date) - parsePerformanceDate(right.date));
+
+  const twrSeries: PerformanceSeriesPoint[] = sortedSnapshots.length
+    ? [{ date: sortedSnapshots[0].date, value: 0 }]
+    : [];
+
+  let cumulativeReturn = 1;
+
+  for (let index = 1; index < sortedSnapshots.length; index += 1) {
+    const previous = sortedSnapshots[index - 1];
+    const current = sortedSnapshots[index];
+
+    const previousTimestamp = parsePerformanceDate(previous.date);
+    const currentTimestamp = parsePerformanceDate(current.date);
+
+    const externalFlows = flowTransactions
+      .filter((flow) => {
+        const timestamp = parsePerformanceDate(flow.date);
+        return timestamp > previousTimestamp && timestamp <= currentTimestamp;
+      })
+      .reduce((sum, flow) => sum + flow.value, 0);
+
+    if (previous.value > 0) {
+      const periodReturn = (current.value - externalFlows) / previous.value - 1;
+      cumulativeReturn *= 1 + periodReturn;
+    }
+
+    twrSeries.push({
+      date: current.date,
+      value: (cumulativeReturn - 1) * 100,
+    });
+  }
+
+  let cumulativeExternalFlow = 0;
+  const externalFlowSeries = flowTransactions.map((flow) => {
+    cumulativeExternalFlow += flow.value;
+
+    return {
+      date: flow.date,
+      value: cumulativeExternalFlow,
+    };
+  });
+
+  return {
+    twrPercent: twrSeries.length ? twrSeries[twrSeries.length - 1].value : 0,
+    twrSeries,
+    externalFlowSeries,
+  };
+}
+
+function PerformanceMiniChart({
+  data,
+  emptyMessage,
+  formatter,
+}: {
+  data: PerformanceSeriesPoint[];
+  emptyMessage: string;
+  formatter: (value: number) => string;
+}) {
+  if (data.length < 2) {
+    return <p className="muted mini-chart-empty">{emptyMessage}</p>;
+  }
+
+  const chartWidth = 420;
+  const chartHeight = 160;
+  const topPadding = 18;
+  const bottomPadding = 24;
+  const values = data.map((point) => point.value);
+  const maxValue = Math.max(...values, 0);
+  const minValue = Math.min(...values, 0);
+  const range = Math.max(maxValue - minValue, 1);
+
+  const points = data.map((point, index) => {
+    const x = data.length === 1 ? chartWidth / 2 : (index / (data.length - 1)) * chartWidth;
+    const y = topPadding + ((maxValue - point.value) / range) * (chartHeight - topPadding - bottomPadding);
+
+    return { x, y };
+  });
+
+  const linePath = points
+    .map((point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
+    .join(" ");
+
+  const yLabels = [maxValue, (maxValue + minValue) / 2, minValue];
+
+  return (
+    <div className="performance-mini-chart">
+      <div className="mini-y-axis">
+        {yLabels.map((value) => (
+          <span key={value}>{formatter(value)}</span>
+        ))}
+      </div>
+
+      <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} preserveAspectRatio="none">
+        <line x1="0" x2={chartWidth} y1={points[0].y} y2={points[0].y} className="mini-chart-baseline" />
+        <path d={linePath} className="mini-chart-line" />
+      </svg>
+
+      <div className="mini-months">
+        <span>{formatChartDate(data[0].date)}</span>
+        <span>{formatChartDate(data[data.length - 1].date)}</span>
+      </div>
+    </div>
+  );
+}
+
+
 function PerformancePage({
   allocationRows,
   isPrivacyMode,
   positions,
   snapshots,
   summary,
+  transactions,
 }: {
   allocationRows: AllocationDisplayRow[];
   isPrivacyMode: boolean;
   positions: PositionPageRow[];
   snapshots: DashboardData["snapshots"];
   summary: { total: number; performance_amount: number; performance_percent: number; start_date: string };
+  transactions: DbTransaction[];
 }) {
   const positionsValue = positions.reduce((sum, position) => sum + position.value, 0);
   const investedCapital = positions.reduce((sum, position) => sum + position.cost, 0);
@@ -569,6 +734,8 @@ function PerformancePage({
     value: row.value ?? 0,
   }));
 
+  const performanceAnalytics = buildPerformanceAnalytics(summary.total, snapshots, transactions);
+
   return (
     <section className="page">
       <div className="title-block">
@@ -580,6 +747,7 @@ function PerformancePage({
         <MetricCard label="Capital investi" value={displayEuro(investedCapital, isPrivacyMode)} note="prix de revient positions" />
         <MetricCard label="Valeur positions" value={displayEuro(positionsValue, isPrivacyMode)} note="hors cash" />
         <MetricCard label="Plus-value latente" value={displayEuro(latentPerformance, isPrivacyMode)} note={formatSignedPercent(latentPerformancePercent)} />
+        <MetricCard label="TWR estimé" value={formatSignedPercent(performanceAnalytics.twrPercent)} note="hors apports/retraits" />
         <MetricCard label="Cash estimé" value={displayEuro(cashValue, isPrivacyMode)} note="total - positions" />
         <MetricCard label="Concentration max." value={topPosition ? formatUnsignedPercent(topPositionWeight) : "—"} note={topPosition?.security_name ?? "aucune position"} />
       </div>
@@ -592,6 +760,28 @@ function PerformancePage({
           </div>
 
           <PortfolioChart snapshots={snapshots} currentTotal={summary.total} isPrivacyMode={isPrivacyMode} />
+        </article>
+
+        <article className="card performance-card">
+          <h2>Rendement hors apports</h2>
+          <p className="muted">TWR estimé à partir des snapshots et des flux externes.</p>
+
+          <PerformanceMiniChart
+            data={performanceAnalytics.twrSeries}
+            emptyMessage="Pas assez de snapshots pour calculer un TWR."
+            formatter={formatSignedPercent}
+          />
+        </article>
+
+        <article className="card performance-card">
+          <h2>Apports nets cumulés</h2>
+          <p className="muted">Dépôts moins retraits. Les transferts internes sont ignorés.</p>
+
+          <PerformanceMiniChart
+            data={performanceAnalytics.externalFlowSeries}
+            emptyMessage="Aucun apport ou retrait détecté."
+            formatter={(value) => displayCompactEuro(value, isPrivacyMode)}
+          />
         </article>
 
         <article className="card performance-card">
