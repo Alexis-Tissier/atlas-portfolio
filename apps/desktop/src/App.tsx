@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useState, useRef } from "react";
 import "./App.css";
 import { monthlyContribution } from "./mocks/mockPortfolio";
 import { formatEuro, getAllocationRows, getPositionRows, getPortfolioSummary } from "./core/portfolioCalculations";
@@ -14,7 +14,7 @@ import {
   getSecurities,
   getTransactions,
   searchOnlineAssets,
-  lookupOnlineAssetQuote,
+  lookupOnlineAssetHistory,
   updateTransaction,
   updateOpenPositionPrices,
   type DashboardData,
@@ -26,7 +26,7 @@ import {
   type PriceUpdateSummary,
   type PositionPageRow,
   type OnlineAssetSearchResult,
-  type OnlineAssetQuote,
+  type OnlineAssetHistory,
 } from "./lib/tauriApi";
 
 const nav = [
@@ -43,6 +43,9 @@ const nav = [
 
 type TransactionFormType = "deposit" | "withdrawal" | "transfer" | "buy" | "sell";
 type CashTransactionType = "deposit" | "withdrawal" | "transfer";
+type MarketChartPeriod = "1M" | "6M" | "1A" | "5A" | "MAX";
+
+const marketChartPeriods: MarketChartPeriod[] = ["1M", "6M", "1A", "5A", "MAX"];
 
 type AllocationDisplayRow = {
   bucket: string;
@@ -154,9 +157,61 @@ function App() {
   const [isDarkMode, setIsDarkMode] = useState(() => readStoredBoolean("appearance.darkMode", false));
   const [topbarSearchQuery, setTopbarSearchQuery] = useState("");
   const [topbarSearchResults, setTopbarSearchResults] = useState<OnlineAssetSearchResult[]>([]);
-  const [topbarQuote, setTopbarQuote] = useState<OnlineAssetQuote | null>(null);
+  const [topbarSelectedAsset, setTopbarSelectedAsset] = useState<OnlineAssetSearchResult | null>(null);
+  const [topbarMarketHistory, setTopbarMarketHistory] = useState<OnlineAssetHistory | null>(null);
+  const [topbarMarketPeriod, setTopbarMarketPeriod] = useState<MarketChartPeriod>("6M");
   const [topbarSearchError, setTopbarSearchError] = useState<string | null>(null);
   const [isTopbarSearching, setIsTopbarSearching] = useState(false);
+  const topbarSearchRef = useRef<HTMLFormElement | null>(null);
+  useEffect(() => {
+    function closeTopbarMarketPanel() {
+      setTopbarSearchResults([]);
+      setTopbarSelectedAsset(null);
+      setTopbarMarketHistory(null);
+      setTopbarSearchError(null);
+    }
+
+    function handleTopbarOutsideInteraction(event: MouseEvent) {
+      const target = event.target;
+
+      if (!(target instanceof Node)) return;
+      if (!topbarSearchRef.current) return;
+
+      if (!topbarSearchRef.current.contains(target)) {
+        closeTopbarMarketPanel();
+      }
+    }
+
+    function handleTopbarEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        closeTopbarMarketPanel();
+      }
+    }
+
+    document.addEventListener("mousedown", handleTopbarOutsideInteraction);
+    document.addEventListener("keydown", handleTopbarEscape);
+
+    return () => {
+      document.removeEventListener("mousedown", handleTopbarOutsideInteraction);
+      document.removeEventListener("keydown", handleTopbarEscape);
+    };
+  }, []);
+
+  async function openTopbarMarketChart(asset: OnlineAssetSearchResult, period = topbarMarketPeriod) {
+    setTopbarSelectedAsset(asset);
+    setTopbarMarketHistory(null);
+    setTopbarSearchError(null);
+    setIsTopbarSearching(true);
+
+    try {
+      const history = await lookupOnlineAssetHistory(asset.symbol, period);
+      setTopbarMarketHistory(history);
+    } catch (error) {
+      setTopbarSearchError(String(error));
+    } finally {
+      setIsTopbarSearching(false);
+    }
+  }
 
   async function handleTopbarSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -165,34 +220,33 @@ function App() {
 
     if (query.length < 2) {
       setTopbarSearchResults([]);
-      setTopbarQuote(null);
+      setTopbarSelectedAsset(null);
+      setTopbarMarketHistory(null);
       setTopbarSearchError("Tape au moins 2 caractères.");
       return;
     }
 
     setIsTopbarSearching(true);
     setTopbarSearchError(null);
-    setTopbarQuote(null);
 
     try {
       const results = await searchOnlineAssets(query);
-      const visibleResults = results.slice(0, 5);
+      const visibleResults = results.slice(0, 6);
       const primaryResult =
-        visibleResults.find((result) => result.symbol.toUpperCase() === query.toUpperCase()) ?? visibleResults[0];
+        visibleResults.find((result) => result.symbol.toUpperCase() === query.toUpperCase()) ?? visibleResults[0] ?? null;
 
       setTopbarSearchResults(visibleResults);
 
       if (primaryResult) {
-        try {
-          const quote = await lookupOnlineAssetQuote(primaryResult.symbol);
-          setTopbarQuote(quote);
-        } catch (quoteError) {
-          setTopbarSearchError(`Actif trouvé, mais cours indisponible : ${String(quoteError)}`);
-        }
+        await openTopbarMarketChart(primaryResult, topbarMarketPeriod);
+      } else {
+        setTopbarSelectedAsset(null);
+        setTopbarMarketHistory(null);
       }
     } catch (error) {
       setTopbarSearchResults([]);
-      setTopbarQuote(null);
+      setTopbarSelectedAsset(null);
+      setTopbarMarketHistory(null);
       setTopbarSearchError(String(error));
     } finally {
       setIsTopbarSearching(false);
@@ -318,14 +372,7 @@ function App() {
 
   const accounts = dashboardData?.accounts ?? [];
   const chartSnapshots = dashboardData?.snapshots ?? [];
-  const topbarPrimaryResult = topbarSearchResults[0] ?? null;
-  const topbarQuotePrice =
-    topbarQuote && topbarPrimaryResult
-      ? isPrivacyMode
-        ? "••••••"
-        : `${topbarQuote.price.toLocaleString("fr-FR", { maximumFractionDigits: 2 })} ${topbarPrimaryResult.currency}`
-      : null;
-
+  const topbarPrimaryResult = topbarSelectedAsset ?? topbarSearchResults[0] ?? null;
   return (
     <div className={isDarkMode ? "app-shell dark" : "app-shell"}>
       <aside className="sidebar">
@@ -369,7 +416,7 @@ function App() {
           </div>
 
           <div className="top-right">
-            <form className="topbar-search" onSubmit={handleTopbarSearch}>
+                        <form className="topbar-search market-search" onSubmit={handleTopbarSearch} ref={topbarSearchRef}>
               <input
                 onChange={(event) => {
                   const value = event.target.value;
@@ -377,7 +424,8 @@ function App() {
 
                   if (!value.trim()) {
                     setTopbarSearchResults([]);
-                    setTopbarQuote(null);
+                    setTopbarSelectedAsset(null);
+                    setTopbarMarketHistory(null);
                     setTopbarSearchError(null);
                   }
                 }}
@@ -386,40 +434,36 @@ function App() {
               />
 
               <button disabled={isTopbarSearching} type="submit">
-                {isTopbarSearching ? "..." : "OK"}
+                {isTopbarSearching ? "..." : "Voir"}
               </button>
 
-              {(topbarSearchResults.length > 0 || topbarSearchError || isTopbarSearching) && topbarSearchQuery.trim() ? (
-                <div className="topbar-search-panel">
-                  {topbarPrimaryResult ? (
-                    <div className="topbar-search-main-result">
-                      <div>
-                        <strong>{topbarPrimaryResult.name}</strong>
-                        <span>
-                          {topbarPrimaryResult.symbol} · {topbarPrimaryResult.asset_class} · {topbarPrimaryResult.region}
-                        </span>
-                      </div>
+              {(topbarPrimaryResult || topbarSearchResults.length > 0 || topbarSearchError || isTopbarSearching) && topbarSearchQuery.trim() ? (
+                <div className="market-search-panel">
+                  <TopbarMarketChart
+                    asset={topbarPrimaryResult}
+                    error={topbarSearchError}
+                    history={topbarMarketHistory}
+                    isLoading={isTopbarSearching}
+                    isPrivacyMode={isPrivacyMode}
+                    onPeriodChange={(nextPeriod) => {
+                      setTopbarMarketPeriod(nextPeriod);
 
-                      <p>
-                        {topbarQuotePrice ?? "Cours en cours..."}
-                        <span>{topbarQuote ? topbarQuote.source : "Yahoo"}</span>
-                      </p>
-                    </div>
-                  ) : null}
-
-                  {topbarSearchResults.slice(1).map((result) => (
-                    <div className="topbar-search-result" key={result.symbol}>
-                      <strong>{result.symbol}</strong>
-                      <span>{result.name}</span>
-                    </div>
-                  ))}
-
-                  {topbarSearchError ? <p className="topbar-search-error">{topbarSearchError}</p> : null}
+                      if (topbarPrimaryResult) {
+                        void openTopbarMarketChart(topbarPrimaryResult, nextPeriod);
+                      }
+                    }}
+                    onSelectAsset={(asset) => {
+                      setTopbarSearchQuery(asset.symbol);
+                      void openTopbarMarketChart(asset, topbarMarketPeriod);
+                    }}
+                    period={topbarMarketPeriod}
+                    results={topbarSearchResults}
+                  />
                 </div>
               ) : null}
             </form>
 
-            <button
+<button
               className="theme-toggle topbar-text-toggle"
               onClick={() => setIsDarkMode((value) => !value)}
               title={isDarkMode ? "Passer en mode clair" : "Passer en mode sombre"}
@@ -534,6 +578,186 @@ function App() {
 
 
 
+
+
+
+
+function TopbarMarketChart({
+  asset,
+  error,
+  history,
+  isLoading,
+  isPrivacyMode,
+  onPeriodChange,
+  onSelectAsset,
+  period,
+  results,
+}: {
+  asset: OnlineAssetSearchResult | null;
+  error: string | null;
+  history: OnlineAssetHistory | null;
+  isLoading: boolean;
+  isPrivacyMode: boolean;
+  onPeriodChange: (period: MarketChartPeriod) => void;
+  onSelectAsset: (asset: OnlineAssetSearchResult) => void;
+  period: MarketChartPeriod;
+  results: OnlineAssetSearchResult[];
+}) {
+  const points = history?.points ?? [];
+  const firstPoint = points[0] ?? null;
+  const lastPoint = points[points.length - 1] ?? null;
+  const firstClose = firstPoint?.close ?? 0;
+  const lastClose = lastPoint?.close ?? history?.current_price ?? 0;
+  const periodPerformance = firstClose > 0 ? ((lastClose - firstClose) / firstClose) * 100 : 0;
+
+  const width = 560;
+  const height = 220;
+  const padding = { top: 18, right: 16, bottom: 34, left: 46 };
+  const innerWidth = width - padding.left - padding.right;
+  const innerHeight = height - padding.top - padding.bottom;
+  const values = points.map((point) => point.close);
+  const minValue = values.length > 0 ? Math.min(...values) : 0;
+  const maxValue = values.length > 0 ? Math.max(...values) : 1;
+  const range = Math.max(maxValue - minValue, Math.abs(maxValue) * 0.03, 1);
+  const yMin = minValue - range * 0.08;
+  const yMax = maxValue + range * 0.08;
+  const yRange = Math.max(yMax - yMin, 1);
+
+  const chartPoints = points.map((point, index) => {
+    const x = padding.left + (index / Math.max(points.length - 1, 1)) * innerWidth;
+    const y = padding.top + ((yMax - point.close) / yRange) * innerHeight;
+
+    return { x, y, point };
+  });
+
+  const linePath = chartPoints
+    .map((item, index) => `${index === 0 ? "M" : "L"} ${item.x.toFixed(2)} ${item.y.toFixed(2)}`)
+    .join(" ");
+
+  const areaPath =
+    chartPoints.length > 0
+      ? `${linePath} L ${chartPoints[chartPoints.length - 1].x.toFixed(2)} ${(padding.top + innerHeight).toFixed(2)} L ${chartPoints[0].x.toFixed(2)} ${(padding.top + innerHeight).toFixed(2)} Z`
+      : "";
+
+  const labelIndexes =
+    points.length >= 3
+      ? [0, Math.floor((points.length - 1) / 2), points.length - 1]
+      : points.map((_, index) => index);
+
+  function formatMarketPrice(value: number) {
+    if (isPrivacyMode) return "••••••";
+
+    return `${value.toLocaleString("fr-FR", {
+      maximumFractionDigits: value >= 100 ? 2 : 4,
+    })} ${history?.currency || asset?.currency || ""}`.trim();
+  }
+
+  function formatMarketDate(timestamp: number) {
+    const date = new Date(timestamp * 1000);
+
+    if (period === "1M" || period === "6M") {
+      return date.toLocaleDateString("fr-FR", { day: "2-digit", month: "short" });
+    }
+
+    if (period === "1A") {
+      return date.toLocaleDateString("fr-FR", { month: "short", year: "2-digit" });
+    }
+
+    return date.toLocaleDateString("fr-FR", { year: "numeric" });
+  }
+
+  return (
+    <div className="market-chart-card">
+      <div className="market-chart-head">
+        <div>
+          <span>Recherche Yahoo Finance</span>
+          <strong>{asset ? asset.name : "Cherche un ticker"}</strong>
+          <p>{asset ? `${asset.symbol} · ${asset.asset_class} · ${asset.region}` : "Exemple : AI.PA, MC.PA, CW8.PA"}</p>
+        </div>
+
+        <div className="market-chart-price">
+          <strong>{history ? formatMarketPrice(history.current_price) : isLoading ? "Chargement..." : "—"}</strong>
+          {history ? <span className={periodPerformance >= 0 ? "positive" : "negative"}>{formatSignedPercent(periodPerformance)}</span> : null}
+        </div>
+      </div>
+
+      <div className="market-chart-tabs">
+        {marketChartPeriods.map((item) => (
+          <button
+            className={item === period ? "active" : ""}
+            key={item}
+            onClick={() => onPeriodChange(item)}
+            type="button"
+          >
+            {item === "MAX" ? "Max" : item}
+          </button>
+        ))}
+      </div>
+
+      <div className="market-chart-graph">
+        {points.length > 1 ? (
+          <svg viewBox={`0 0 ${width} ${height}`} role="img">
+            <defs>
+              <linearGradient id="marketChartFill" x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0%" stopColor="currentColor" stopOpacity="0.2" />
+                <stop offset="100%" stopColor="currentColor" stopOpacity="0.02" />
+              </linearGradient>
+            </defs>
+
+            {[0, 1, 2, 3].map((line) => {
+              const y = padding.top + (line / 3) * innerHeight;
+              return <line className="market-grid-line" key={line} x1={padding.left} x2={width - padding.right} y1={y} y2={y} />;
+            })}
+
+            <text className="market-axis-label" x="6" y={padding.top + 4}>{formatMarketPrice(yMax)}</text>
+            <text className="market-axis-label" x="6" y={padding.top + innerHeight}>{formatMarketPrice(yMin)}</text>
+
+            <path className="market-area-path" d={areaPath} />
+            <path className="market-line-path" d={linePath} />
+
+            {chartPoints.length > 0 ? (
+              <circle className="market-end-dot" cx={chartPoints[chartPoints.length - 1].x} cy={chartPoints[chartPoints.length - 1].y} r="4" />
+            ) : null}
+
+            {labelIndexes.map((index) => {
+              const item = chartPoints[index];
+
+              if (!item) return null;
+
+              return (
+                <text className="market-x-label" key={index} x={item.x} y={height - 8} textAnchor={index === 0 ? "start" : index === points.length - 1 ? "end" : "middle"}>
+                  {formatMarketDate(item.point.timestamp)}
+                </text>
+              );
+            })}
+          </svg>
+        ) : (
+          <div className="market-chart-empty">
+            {isLoading ? "Chargement du graphique..." : error ?? "Tape un ticker puis valide pour ouvrir le graphique."}
+          </div>
+        )}
+      </div>
+
+      {results.length > 1 ? (
+        <div className="market-search-results">
+          {results.slice(0, 5).map((result) => (
+            <button
+              className={asset?.symbol === result.symbol ? "active" : ""}
+              key={result.symbol}
+              onClick={() => onSelectAsset(result)}
+              type="button"
+            >
+              <strong>{result.symbol}</strong>
+              <span>{result.name}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {error ? <p className="market-chart-error">{error}</p> : null}
+    </div>
+  );
+}
 
 
 
