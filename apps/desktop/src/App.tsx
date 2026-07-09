@@ -338,7 +338,18 @@ function App() {
           </div>
         </header>
 
-        {currentPage === "Répartition" ? (
+        {currentPage === "Aperçu" ? (
+          <OverviewPage
+            accounts={accounts}
+            allocationRows={allocationRows}
+            isPrivacyMode={isPrivacyMode}
+            onNavigate={setCurrentPage}
+            positions={positionsPageRows}
+            snapshots={chartSnapshots}
+            summary={summary}
+            transactions={transactions}
+          />
+        ) : currentPage === "Répartition" ? (
           <AllocationPage
             accounts={accounts}
             allocationRows={allocationRows}
@@ -416,6 +427,281 @@ function App() {
     </div>
   );
 }
+
+
+
+
+
+function OverviewPage({
+  accounts,
+  allocationRows,
+  isPrivacyMode,
+  onNavigate,
+  positions,
+  snapshots,
+  summary,
+  transactions,
+}: {
+  accounts: DashboardData["accounts"];
+  allocationRows: AllocationDisplayRow[];
+  isPrivacyMode: boolean;
+  onNavigate: (page: string) => void;
+  positions: PositionPageRow[];
+  snapshots: DashboardData["snapshots"];
+  summary: { total: number; performance_amount: number; performance_percent: number; start_date: string };
+  transactions: DbTransaction[];
+}) {
+  const actualAllocationRows = allocationRows.map((row) => ({
+    ...row,
+    actualPercent: row.actualPercent ?? 0,
+    value: row.value ?? 0,
+  }));
+
+  const allocationDonutBackground = buildAllocationDonut(actualAllocationRows);
+  const cashValue = accounts.reduce((sum, account) => sum + account.cash_balance, 0);
+  const cashWeight = summary.total > 0 ? (cashValue / summary.total) * 100 : 0;
+  const topPositions = [...positions].sort((left, right) => right.value - left.value).slice(0, 5);
+  const topPosition = topPositions[0] ?? null;
+  const topPositionWeight = topPosition && summary.total > 0 ? (topPosition.value / summary.total) * 100 : 0;
+
+  const largestGap = [...actualAllocationRows]
+    .map((row) => ({
+      ...row,
+      gap: (row.targetPercent ?? 0) - (row.actualPercent ?? 0),
+    }))
+    .sort((left, right) => right.gap - left.gap)[0] ?? null;
+
+  const latestTransactions = transactions
+    .filter((transaction) => !["opening_position", "opening_cash"].includes(transaction.transaction_type))
+    .sort((left, right) => parsePerformanceDate(right.date) - parsePerformanceDate(left.date))
+    .slice(0, 5);
+
+  function overviewTransactionLabel(type: string) {
+    if (type === "deposit") return "Dépôt";
+    if (type === "withdrawal") return "Retrait";
+    if (type === "transfer") return "Transfert";
+    if (type === "buy") return "Achat";
+    if (type === "sell") return "Vente";
+    if (type === "dividend") return "Dividende";
+    if (type === "fee") return "Frais";
+    return type;
+  }
+
+  return (
+    <section className="page overview-page portfolio-shaped-overview">
+      <div className="title-block">
+        <h1>Aperçu</h1>
+        <p>Vue synthétique du portefeuille : patrimoine, allocation, vigilance et dernières opérations.</p>
+      </div>
+
+      <div className="dashboard">
+        <section className="left-col">
+          <article className="card total-card">
+            <div>
+              <p className="label">Patrimoine total</p>
+              <p className="big-number">{displayEuro(summary.total, isPrivacyMode)}</p>
+              <p className={summary.performance_amount >= 0 ? "positive" : "negative"}>
+                {displayEuro(summary.performance_amount, isPrivacyMode)} ({formatSignedPercent(summary.performance_percent)}) <span>depuis le début</span>
+              </p>
+              <p className="muted">Depuis le {summary.start_date}</p>
+            </div>
+
+            <div className="overview-total-actions">
+              <button className="select-button" type="button" onClick={() => onNavigate("Portefeuille")}>
+                Voir portefeuille
+              </button>
+              <button className="select-button" type="button" onClick={() => onNavigate("Recommandations")}>
+                Recommandations
+              </button>
+            </div>
+          </article>
+
+          <article className="card chart-card">
+            <div className="card-header">
+              <h2>Évolution du patrimoine</h2>
+              <button className="secondary-action" type="button" onClick={() => onNavigate("Portefeuille")}>
+                Détail
+              </button>
+            </div>
+
+            <PortfolioChart
+                currentTotal={summary.total}
+                isPrivacyMode={isPrivacyMode}
+                period="all"
+                snapshots={snapshots}
+              />
+          </article>
+
+          <article className="card positions-card overview-compact-card">
+            <div className="card-header">
+              <h2>Allocation rapide</h2>
+              <button className="secondary-action" type="button" onClick={() => onNavigate("Répartition")}>
+                Répartition
+              </button>
+            </div>
+
+            <table>
+              <thead>
+                <tr>
+                  <th>Classe</th>
+                  <th>Valeur</th>
+                  <th>Actuel</th>
+                  <th>Cible</th>
+                  <th>Écart</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {actualAllocationRows.map((row) => {
+                  const gap = (row.targetPercent ?? 0) - row.actualPercent;
+
+                  return (
+                    <tr key={row.bucket}>
+                      <td><span className="asset-dot" style={{ background: colorForBucket(row.bucket) }} /> {row.bucket}</td>
+                      <td>{displayEuro(row.value, isPrivacyMode)}</td>
+                      <td>{formatUnsignedPercent(row.actualPercent)}</td>
+                      <td>{formatUnsignedPercent(row.targetPercent ?? 0)}</td>
+                      <td className={gap >= 0 ? "positive" : "negative"}>{formatSignedPercent(gap)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </article>
+
+          <article className="card positions-card overview-compact-card">
+            <div className="card-header">
+              <h2>Dernières opérations</h2>
+              <button className="secondary-action" type="button" onClick={() => onNavigate("Transactions")}>
+                Transactions
+              </button>
+            </div>
+
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Type</th>
+                  <th>Compte</th>
+                  <th>Actif</th>
+                  <th>Montant</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {latestTransactions.map((transaction) => (
+                  <tr key={transaction.id}>
+                    <td>{formatDate(transaction.date)}</td>
+                    <td>{overviewTransactionLabel(transaction.transaction_type)}</td>
+                    <td>{transaction.account_name ?? transaction.from_account_name ?? transaction.to_account_name ?? "—"}</td>
+                    <td>{transaction.security_name ?? "—"}</td>
+                    <td>{displayEuro(transaction.amount, isPrivacyMode)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </article>
+        </section>
+
+        <aside className="right-col">
+          <article className="card allocation-card">
+            <h2>Répartition actuelle</h2>
+            <p>Allocation réelle de votre portefeuille aujourd’hui.</p>
+
+            <div className="allocation-row">
+              <div className="donut" style={{ background: allocationDonutBackground }} />
+              <div className="legend">
+                {actualAllocationRows.map((row) => (
+                  <AllocationLegend
+                    key={row.bucket}
+                    amount={row.value}
+                    color={colorForBucket(row.bucket)}
+                    isPrivacyMode={isPrivacyMode}
+                    label={row.bucket}
+                    percent={row.actualPercent}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <div className="allocation-target-note">
+              <span>Objectif cible</span>
+              <strong>ETF 40 % · Actions 45 % · Crypto 10 % · Cash 5 %</strong>
+            </div>
+          </article>
+
+          <article className="card sqlite-status-card">
+            <div className="status-header">
+              <h2>À surveiller</h2>
+              <span className="status-pill warning">Synthèse</span>
+            </div>
+
+            <div className="accounts-list">
+              <div className="account-line">
+                <div>
+                  <strong>Classe à renforcer</strong>
+                  <span>
+                    {largestGap && largestGap.gap > 0
+                      ? `${largestGap.bucket} · ${formatUnsignedPercent(largestGap.gap)} sous cible`
+                      : "Allocation proche des objectifs"}
+                  </span>
+                </div>
+              </div>
+
+              <div className="account-line">
+                <div>
+                  <strong>Ligne la plus concentrée</strong>
+                  <span>
+                    {topPosition
+                      ? `${topPosition.security_name} · ${formatUnsignedPercent(topPositionWeight)}`
+                      : "Aucune position"}
+                  </span>
+                </div>
+              </div>
+
+              <div className="account-line">
+                <div>
+                  <strong>Cash</strong>
+                  <span>{formatUnsignedPercent(cashWeight)} du portefeuille</span>
+                </div>
+                <p>{displayEuro(cashValue, isPrivacyMode)}</p>
+              </div>
+            </div>
+          </article>
+
+          <article className="card sqlite-status-card">
+            <div className="status-header">
+              <h2>Principales positions</h2>
+              <button className="secondary-action" type="button" onClick={() => onNavigate("Positions")}>
+                Voir
+              </button>
+            </div>
+
+            <div className="accounts-list">
+              {topPositions.map((position) => {
+                const weight = summary.total > 0 ? (position.value / summary.total) * 100 : 0;
+
+                return (
+                  <div className="account-line" key={position.position_id}>
+                    <div>
+                      <strong>{position.security_name}</strong>
+                      <span>{position.account_name} · {position.asset_class}</span>
+                    </div>
+                    <p>
+                      {displayEuro(position.value, isPrivacyMode)}
+                      <span>{formatUnsignedPercent(weight)}</span>
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          </article>
+        </aside>
+      </div>
+    </section>
+  );
+}
+
 
 function DashboardPage({
   accounts,
