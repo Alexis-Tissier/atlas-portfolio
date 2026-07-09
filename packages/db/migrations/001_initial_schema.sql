@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   type TEXT NOT NULL CHECK (
-    type IN ('current_account', 'pea', 'cto', 'livret_a', 'crypto_wallet', 'opening_position')
+    type IN ('current_account', 'pea', 'cto', 'livret_a', 'crypto_wallet')
   ),
   currency TEXT NOT NULL DEFAULT 'EUR',
   cash_balance REAL NOT NULL DEFAULT 0,
@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS transactions (
   id TEXT PRIMARY KEY,
   date TEXT NOT NULL,
   type TEXT NOT NULL CHECK (
-    type IN ('deposit', 'withdrawal', 'transfer', 'buy', 'sell', 'dividend', 'fee')
+    type IN ('deposit', 'withdrawal', 'transfer', 'buy', 'sell', 'dividend', 'fee', 'opening_position')
   ),
   from_account_id TEXT,
   to_account_id TEXT,
