@@ -36,6 +36,7 @@ const nav = [
   "Performance",
   "Objectifs",
   "Recommandations",
+  "Prévisionnel",
   "Journal",
 ];
 
@@ -89,6 +90,21 @@ type AccountClassDistribution = {
   totalValue: number;
   rows: DistributionRow[];
 };
+
+type ForecastPoint = {
+  year: number;
+  value: number;
+  contributions: number;
+  performance: number;
+};
+
+type ForecastProjection = {
+  finalValue: number;
+  totalContributions: number;
+  totalPerformance: number;
+  points: ForecastPoint[];
+};
+
 
 type RecommendationAction = {
   assetClass: string;
@@ -393,6 +409,11 @@ function App() {
             securities={securities}
             transactions={transactions}
             transactionsError={transactionsError}
+          />
+        ) : currentPage === "Prévisionnel" ? (
+          <ForecastPage
+            isPrivacyMode={isPrivacyMode}
+            summary={summary}
           />
         ) : currentPage === "Recommandations" ? (
           <RecommendationsPage
@@ -929,6 +950,318 @@ function GoalsPage({
         </article>
       </div>
     </section>
+  );
+}
+
+
+
+
+function ForecastPage({
+  isPrivacyMode,
+  summary,
+}: {
+  isPrivacyMode: boolean;
+  summary: { total: number; performance_amount: number; performance_percent: number; start_date: string };
+}) {
+  const [monthlyInput, setMonthlyInput] = useState(String(monthlyContribution.amount));
+  const [yearsInput, setYearsInput] = useState("10");
+  const [annualReturnInput, setAnnualReturnInput] = useState("6");
+  const [annualIncreaseInput, setAnnualIncreaseInput] = useState("0");
+
+  const initialValue = Math.max(summary.total, 0);
+  const monthlyAmount = Math.max(parseDecimal(monthlyInput) || 0, 0);
+  const years = Math.min(Math.max(Math.round(parseDecimal(yearsInput) || 10), 1), 40);
+  const annualReturnPercent = Math.min(Math.max(parseDecimal(annualReturnInput) || 0, -20), 30);
+  const annualIncreasePercent = Math.min(Math.max(parseDecimal(annualIncreaseInput) || 0, 0), 20);
+
+  const projection = buildForecastProjection(
+    initialValue,
+    monthlyAmount,
+    years,
+    annualReturnPercent,
+    annualIncreasePercent,
+  );
+
+  const scenarios = [
+    {
+      label: "Prudent",
+      returnPercent: 3,
+      projection: buildForecastProjection(initialValue, monthlyAmount, years, 3, annualIncreasePercent),
+    },
+    {
+      label: "Central",
+      returnPercent: 6,
+      projection: buildForecastProjection(initialValue, monthlyAmount, years, 6, annualIncreasePercent),
+    },
+    {
+      label: "Dynamique",
+      returnPercent: 8,
+      projection: buildForecastProjection(initialValue, monthlyAmount, years, 8, annualIncreasePercent),
+    },
+  ];
+
+  return (
+    <section className="page">
+      <div className="title-block">
+        <h1>Prévisionnel</h1>
+        <p>Simulation du patrimoine futur avec apports mensuels, rendement annuel estimé et intérêts composés.</p>
+      </div>
+
+      <div className="forecast-layout">
+        <article className="card forecast-settings-card">
+          <h2>Hypothèses</h2>
+          <p className="muted">Modifiez les paramètres pour voir l’effet des apports et du rendement dans le temps.</p>
+
+          <div className="forecast-input-grid">
+            <label>
+              Patrimoine de départ
+              <input disabled value={displayEuro(initialValue, isPrivacyMode)} />
+            </label>
+
+            <label>
+              Apport mensuel
+              <input
+                inputMode="decimal"
+                onChange={(event) => setMonthlyInput(event.target.value)}
+                value={monthlyInput}
+              />
+            </label>
+
+            <label>
+              Durée en années
+              <input
+                inputMode="numeric"
+                onChange={(event) => setYearsInput(event.target.value)}
+                value={yearsInput}
+              />
+            </label>
+
+            <label>
+              Rendement annuel estimé
+              <input
+                inputMode="decimal"
+                onChange={(event) => setAnnualReturnInput(event.target.value)}
+                value={annualReturnInput}
+              />
+            </label>
+
+            <label>
+              Hausse annuelle des apports
+              <input
+                inputMode="decimal"
+                onChange={(event) => setAnnualIncreaseInput(event.target.value)}
+                value={annualIncreaseInput}
+              />
+            </label>
+          </div>
+
+          <p className="forecast-note">
+            Hypothèse simplifiée : les apports sont ajoutés chaque mois, le rendement est composé mensuellement.
+            Ce n’est pas une garantie, seulement une simulation.
+          </p>
+        </article>
+
+        <article className="card forecast-result-card">
+          <div className="card-header">
+            <h2>Résultat estimé</h2>
+            <span className="status-pill connected">{years} ans</span>
+          </div>
+
+          <div className="forecast-main-result">
+            <p>Patrimoine estimé</p>
+            <strong>{displayEuro(projection.finalValue, isPrivacyMode)}</strong>
+          </div>
+
+          <div className="forecast-result-grid">
+            <div>
+              <span>Capital versé</span>
+              <strong>{displayEuro(projection.totalContributions, isPrivacyMode)}</strong>
+            </div>
+
+            <div>
+              <span>Intérêts / performance</span>
+              <strong>{displayEuro(projection.totalPerformance, isPrivacyMode)}</strong>
+            </div>
+
+            <div>
+              <span>Multiplicateur</span>
+              <strong>{projection.totalContributions > 0 ? `${(projection.finalValue / projection.totalContributions).toFixed(2).replace(".", ",")}×` : "—"}</strong>
+            </div>
+          </div>
+        </article>
+
+        <article className="card forecast-chart-card">
+          <div className="card-header">
+            <h2>Projection dans le temps</h2>
+            <span className="status-pill connected">{formatSignedPercent(annualReturnPercent)} / an</span>
+          </div>
+
+          <ForecastChart projection={projection} isPrivacyMode={isPrivacyMode} />
+        </article>
+
+        <article className="card forecast-scenarios-card">
+          <h2>Scénarios rapides</h2>
+          <p className="muted">Comparaison à apports identiques, selon plusieurs rendements annuels.</p>
+
+          <div className="forecast-scenario-list">
+            {scenarios.map((scenario) => (
+              <div className="forecast-scenario" key={scenario.label}>
+                <div>
+                  <strong>{scenario.label}</strong>
+                  <span>{formatUnsignedPercent(scenario.returnPercent)} / an</span>
+                </div>
+
+                <p>{displayEuro(scenario.projection.finalValue, isPrivacyMode)}</p>
+                <small>{displayEuro(scenario.projection.totalPerformance, isPrivacyMode)} d’intérêts/performance</small>
+              </div>
+            ))}
+          </div>
+        </article>
+
+        <article className="card forecast-table-card">
+          <h2>Détail par année</h2>
+
+          <table className="forecast-table">
+            <thead>
+              <tr>
+                <th>Année</th>
+                <th>Capital versé</th>
+                <th>Intérêts / performance</th>
+                <th>Patrimoine estimé</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {projection.points.filter((point) => point.year > 0).map((point) => (
+                <tr key={point.year}>
+                  <td>Année {point.year}</td>
+                  <td>{displayEuro(point.contributions, isPrivacyMode)}</td>
+                  <td>{displayEuro(point.performance, isPrivacyMode)}</td>
+                  <td className="amount-cell">{displayEuro(point.value, isPrivacyMode)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </article>
+      </div>
+    </section>
+  );
+}
+
+function buildForecastProjection(
+  initialValue: number,
+  monthlyContributionAmount: number,
+  years: number,
+  annualReturnPercent: number,
+  annualContributionIncreasePercent: number,
+): ForecastProjection {
+  const points: ForecastPoint[] = [];
+  const totalMonths = years * 12;
+  const monthlyReturn = Math.pow(1 + annualReturnPercent / 100, 1 / 12) - 1;
+  const annualContributionIncrease = 1 + annualContributionIncreasePercent / 100;
+
+  let value = initialValue;
+  let totalContributions = initialValue;
+  let currentMonthlyContribution = monthlyContributionAmount;
+
+  points.push({
+    year: 0,
+    value,
+    contributions: totalContributions,
+    performance: 0,
+  });
+
+  for (let month = 1; month <= totalMonths; month += 1) {
+    value *= 1 + monthlyReturn;
+    value += currentMonthlyContribution;
+    totalContributions += currentMonthlyContribution;
+
+    if (month % 12 === 0) {
+      const performance = value - totalContributions;
+
+      points.push({
+        year: month / 12,
+        value,
+        contributions: totalContributions,
+        performance,
+      });
+
+      currentMonthlyContribution *= annualContributionIncrease;
+    }
+  }
+
+  const finalValue = points[points.length - 1]?.value ?? initialValue;
+  const finalContributions = points[points.length - 1]?.contributions ?? initialValue;
+
+  return {
+    finalValue,
+    totalContributions: finalContributions,
+    totalPerformance: finalValue - finalContributions,
+    points,
+  };
+}
+
+function ForecastChart({
+  isPrivacyMode,
+  projection,
+}: {
+  isPrivacyMode: boolean;
+  projection: ForecastProjection;
+}) {
+  const data = projection.points;
+  const chartWidth = 780;
+  const chartHeight = 250;
+  const topPadding = 18;
+  const bottomPadding = 30;
+  const values = data.flatMap((point) => [point.value, point.contributions]);
+  const maxValue = Math.max(...values, 1);
+  const minValue = 0;
+  const range = Math.max(maxValue - minValue, 1);
+
+  function pointToCoordinates(value: number, index: number) {
+    const x = data.length === 1 ? chartWidth / 2 : (index / (data.length - 1)) * chartWidth;
+    const y = topPadding + ((maxValue - value) / range) * (chartHeight - topPadding - bottomPadding);
+
+    return { x, y };
+  }
+
+  function buildPath(selector: (point: ForecastPoint) => number) {
+    return data
+      .map((point, index) => {
+        const coordinates = pointToCoordinates(selector(point), index);
+        return `${index === 0 ? "M" : "L"}${coordinates.x.toFixed(2)} ${coordinates.y.toFixed(2)}`;
+      })
+      .join(" ");
+  }
+
+  const valuePath = buildPath((point) => point.value);
+  const contributionPath = buildPath((point) => point.contributions);
+  const yLabels = [maxValue, maxValue * 0.75, maxValue * 0.5, maxValue * 0.25, 0];
+
+  return (
+    <div className="forecast-chart">
+      <div className="y-axis">
+        {yLabels.map((value) => (
+          <span key={value}>{displayCompactEuro(value, isPrivacyMode)}</span>
+        ))}
+      </div>
+
+      <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} preserveAspectRatio="none" aria-label="Projection du patrimoine">
+        <path d={contributionPath} className="forecast-chart-contribution-line" />
+        <path d={valuePath} className="forecast-chart-value-line" />
+      </svg>
+
+      <div className="forecast-chart-footer">
+        {data.map((point) => (
+          <span key={point.year}>{point.year === 0 ? "Départ" : `A${point.year}`}</span>
+        ))}
+      </div>
+
+      <div className="forecast-legend">
+        <span><i className="forecast-dot value" /> Patrimoine estimé</span>
+        <span><i className="forecast-dot contribution" /> Capital versé</span>
+      </div>
+    </div>
   );
 }
 

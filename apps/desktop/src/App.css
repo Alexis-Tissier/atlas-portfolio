@@ -1384,3 +1384,245 @@ td:first-child { color: #374151; font-weight: 600; }
     text-align: left;
   }
 }
+
+
+.forecast-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, .8fr) minmax(0, 1.2fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.forecast-settings-card,
+.forecast-result-card,
+.forecast-chart-card,
+.forecast-scenarios-card,
+.forecast-table-card {
+  padding: 22px;
+}
+
+.forecast-chart-card,
+.forecast-table-card {
+  grid-column: 1 / -1;
+}
+
+.forecast-input-grid {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.forecast-input-grid label {
+  display: grid;
+  gap: 6px;
+  color: #8b949f;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.forecast-input-grid input {
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid #dfe3e8;
+  border-radius: 12px;
+  color: #253142;
+  font-size: 15px;
+  font-weight: 800;
+  background: #fff;
+}
+
+.forecast-input-grid input:disabled {
+  color: #8b949f;
+  background: #f6f7f8;
+}
+
+.forecast-note {
+  margin-top: 16px;
+  color: #8b949f;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.forecast-main-result {
+  margin-top: 20px;
+}
+
+.forecast-main-result p {
+  margin: 0;
+  color: #8b949f;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.forecast-main-result strong {
+  display: block;
+  margin-top: 6px;
+  color: #253142;
+  font-size: 34px;
+  letter-spacing: -0.04em;
+}
+
+.forecast-result-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.forecast-result-grid div {
+  padding: 13px;
+  border: 1px solid #eef0f2;
+  border-radius: 14px;
+  background: #fbfcfd;
+}
+
+.forecast-result-grid span,
+.forecast-result-grid strong {
+  display: block;
+}
+
+.forecast-result-grid span {
+  color: #9aa3ad;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.forecast-result-grid strong {
+  margin-top: 5px;
+  color: #253142;
+  font-size: 15px;
+}
+
+.forecast-chart {
+  position: relative;
+  margin-top: 18px;
+  padding-left: 58px;
+}
+
+.forecast-chart svg {
+  width: 100%;
+  height: 260px;
+  overflow: visible;
+}
+
+.forecast-chart-value-line,
+.forecast-chart-contribution-line {
+  fill: none;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.forecast-chart-value-line {
+  stroke: #6f9df0;
+}
+
+.forecast-chart-contribution-line {
+  stroke: #c8cfd8;
+  stroke-dasharray: 8 8;
+}
+
+.forecast-chart-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  color: #9aa3ad;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.forecast-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 14px;
+  color: #6f7a86;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.forecast-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 6px;
+  border-radius: 999px;
+}
+
+.forecast-dot.value {
+  background: #6f9df0;
+}
+
+.forecast-dot.contribution {
+  background: #c8cfd8;
+}
+
+.forecast-scenario-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.forecast-scenario {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 140px;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid #eef0f2;
+  border-radius: 14px;
+  background: #fbfcfd;
+}
+
+.forecast-scenario div strong,
+.forecast-scenario div span,
+.forecast-scenario p,
+.forecast-scenario small {
+  display: block;
+}
+
+.forecast-scenario strong {
+  color: #253142;
+  font-size: 13px;
+}
+
+.forecast-scenario span,
+.forecast-scenario small {
+  color: #9aa3ad;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.forecast-scenario p {
+  margin: 0;
+  color: #253142;
+  font-size: 16px;
+  font-weight: 900;
+  text-align: right;
+}
+
+.forecast-scenario small {
+  grid-column: 1 / -1;
+}
+
+.forecast-table {
+  margin-top: 16px;
+}
+
+@media (max-width: 1100px) {
+  .forecast-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .forecast-result-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .forecast-scenario {
+    grid-template-columns: 1fr;
+  }
+
+  .forecast-scenario p {
+    text-align: left;
+  }
+}
