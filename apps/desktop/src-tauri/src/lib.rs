@@ -2148,6 +2148,10 @@ fn apply_stored_transaction_effect(
                 price,
             )?;
         }
+        "opening_position" => {
+            // Ligne technique pour expliquer les positions déjà présentes au début du suivi.
+            // Elle ne modifie pas le cash ni la position actuelle : elle sert au diagnostic/recalcul.
+        }
         _ => {
             return Err(format!(
                 "Type de transaction non pris en charge : {}",
@@ -2240,6 +2244,146 @@ fn stored_transaction_from_update_input(
         amount,
         note: input.note.filter(|value| !value.trim().is_empty()),
     })
+}
+
+#[tauri::command]
+fn create_opening_position_adjustments() -> Result<usize, String> {
+    let mut connection = open_database()?;
+    let sqlite_transaction = connection
+        .transaction()
+        .map_err(|error| format!("Impossible de démarrer la transaction SQLite : {error}"))?;
+
+    let rows = {
+        let mut statement = sqlite_transaction
+            .prepare(
+                "
+                SELECT
+                  p.account_id,
+                  p.security_id,
+                  p.quantity AS current_quantity,
+                  p.average_price,
+                  COALESCE(j.journal_quantity, 0) AS journal_quantity,
+                  a.name AS account_name,
+                  s.name AS security_name
+                FROM positions p
+                JOIN accounts a ON a.id = p.account_id
+                JOIN securities s ON s.id = p.security_id
+                LEFT JOIN (
+                  SELECT
+                    account_id,
+                    security_id,
+                    SUM(
+                      CASE
+                        WHEN type = 'buy' THEN COALESCE(quantity, 0)
+                        WHEN type = 'sell' THEN -COALESCE(quantity, 0)
+                        WHEN type = 'opening_position' THEN COALESCE(quantity, 0)
+                        ELSE 0
+                      END
+                    ) AS journal_quantity
+                  FROM transactions
+                  WHERE account_id IS NOT NULL
+                    AND security_id IS NOT NULL
+                    AND type IN ('buy', 'sell', 'opening_position')
+                  GROUP BY account_id, security_id
+                ) j ON j.account_id = p.account_id AND j.security_id = p.security_id
+                WHERE p.quantity > 0
+                ORDER BY a.name, s.name
+                ",
+            )
+            .map_err(|error| format!("Erreur SQL ajustements d'ouverture : {error}"))?;
+
+        let mapped_rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, f64>(2)?,
+                    row.get::<_, f64>(3)?,
+                    row.get::<_, f64>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                ))
+            })
+            .map_err(|error| format!("Erreur lecture ajustements d'ouverture : {error}"))?;
+
+        let mut rows = Vec::new();
+
+        for row in mapped_rows {
+            rows.push(
+                row.map_err(|error| format!("Erreur conversion ajustement d'ouverture : {error}"))?,
+            );
+        }
+
+        rows
+    };
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("Erreur horloge système : {error}"))?
+        .as_millis();
+
+    let mut created_count = 0usize;
+
+    for (
+        index,
+        (
+            account_id,
+            security_id,
+            current_quantity,
+            average_price,
+            journal_quantity,
+            account_name,
+            security_name,
+        ),
+    ) in rows.into_iter().enumerate()
+    {
+        let difference = current_quantity - journal_quantity;
+
+        if difference.abs() <= 0.000001 {
+            continue;
+        }
+
+        let transaction_id = format!("tx-opening-{now_ms}-{index}");
+        let note = format!(
+            "Ajustement d'ouverture généré depuis le diagnostic : {security_name} / {account_name}."
+        );
+
+        sqlite_transaction
+            .execute(
+                "
+                INSERT INTO transactions (
+                  id,
+                  date,
+                  type,
+                  account_id,
+                  security_id,
+                  quantity,
+                  price,
+                  fees,
+                  amount,
+                  note
+                )
+                VALUES (?1, date('now'), 'opening_position', ?2, ?3, ?4, ?5, 0, 0, ?6)
+                ",
+                params![
+                    transaction_id,
+                    account_id,
+                    security_id,
+                    difference,
+                    average_price,
+                    note
+                ],
+            )
+            .map_err(|error| format!("Erreur création ajustement d'ouverture : {error}"))?;
+
+        created_count += 1;
+    }
+
+    sqlite_transaction
+        .commit()
+        .map_err(|error| format!("Erreur validation ajustements d'ouverture : {error}"))?;
+
+    Ok(created_count)
 }
 
 #[tauri::command]
@@ -2699,6 +2843,7 @@ pub fn run() {
             create_trade_transaction,
             update_transaction,
             delete_transaction,
+            create_opening_position_adjustments,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

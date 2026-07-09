@@ -6,6 +6,7 @@ import {
   createCashTransaction,
   createSecurityFromOnlineResult,
   createTradeTransaction,
+  createOpeningPositionAdjustments,
   deleteTransaction,
   getDashboardData,
   getPositionsPage,
@@ -53,6 +54,23 @@ type CsvImportCandidate = {
   status: "valid" | "error";
   message: string;
   payload?: NewCashTransaction | NewTradeTransaction;
+};
+
+type PortfolioAuditItem = {
+  kind: "position" | "cash" | "warning";
+  label: string;
+  journalValue: string;
+  currentValue: string;
+  difference: string;
+  status: "ok" | "warning" | "info";
+  message: string;
+};
+
+type RebuiltPosition = {
+  accountName: string;
+  securityName: string;
+  quantity: number;
+  cost: number;
 };
 
 
@@ -253,6 +271,14 @@ function App() {
             securities={securities}
             transactions={transactions}
             transactionsError={transactionsError}
+          />
+        ) : currentPage === "Journal" ? (
+          <PortfolioAuditPage
+            accounts={accounts}
+            isPrivacyMode={isPrivacyMode}
+            onRefresh={refreshData}
+            positions={positionsPageRows}
+            transactions={transactions}
           />
         ) : currentPage === "Importer / Exporter" ? (
           <ImportExportPage
@@ -1400,6 +1426,335 @@ function AssetPicker({
 }
 
 
+
+function PortfolioAuditPage({
+  accounts,
+  isPrivacyMode,
+  onRefresh,
+  positions,
+  transactions,
+}: {
+  accounts: DashboardData["accounts"];
+  isPrivacyMode: boolean;
+  onRefresh: () => Promise<void>;
+  positions: PositionPageRow[];
+  transactions: DbTransaction[];
+}) {
+  const [openingAdjustmentMessage, setOpeningAdjustmentMessage] = useState<string | null>(null);
+  const [isCreatingOpeningAdjustments, setIsCreatingOpeningAdjustments] = useState(false);
+  const auditItems = buildPortfolioAuditItems(accounts, positions, transactions, isPrivacyMode);
+  const warningCount = auditItems.filter((item) => item.status === "warning").length;
+  const okCount = auditItems.filter((item) => item.status === "ok").length;
+  const reconstructedPositionCount = auditItems.filter((item) => item.kind === "position").length;
+  const cashFlowCount = auditItems.filter((item) => item.kind === "cash").length;
+
+  async function handleCreateOpeningAdjustments() {
+    setIsCreatingOpeningAdjustments(true);
+    setOpeningAdjustmentMessage(null);
+
+    try {
+      const createdCount = await createOpeningPositionAdjustments();
+      await onRefresh();
+      setOpeningAdjustmentMessage(
+        createdCount > 0
+          ? `${createdCount} ajustement(s) d’ouverture créé(s).`
+          : "Aucun ajustement nécessaire."
+      );
+    } catch (error) {
+      setOpeningAdjustmentMessage(String(error));
+    } finally {
+      setIsCreatingOpeningAdjustments(false);
+    }
+  }
+
+  return (
+    <section className="page">
+      <div className="title-block">
+        <h1>Journal</h1>
+        <p>Contrôle de cohérence entre vos transactions et l’état actuel du portefeuille.</p>
+      </div>
+
+      <div className="audit-summary-grid">
+        <MetricCard label="Transactions" value={String(transactions.length)} note="lignes analysées" />
+        <MetricCard label="Positions vérifiées" value={String(reconstructedPositionCount)} note="depuis le journal" />
+        <MetricCard label="Éléments OK" value={String(okCount)} note="cohérents" />
+        <MetricCard label="Flux cash" value={String(cashFlowCount)} note="comptes détectés" />
+        <MetricCard label="Alertes" value={String(warningCount)} note={warningCount === 0 ? "aucun écart bloquant" : "écarts à vérifier"} />
+      </div>
+
+      <article className="card audit-card">
+        <div className="audit-header">
+          <div>
+            <h2>Diagnostic de cohérence</h2>
+            <p>
+              Cette page ne modifie pas la base. Elle recalcule uniquement un état théorique depuis le journal
+              pour repérer les écarts avant une future reconstruction automatique.
+            </p>
+          </div>
+
+          <div className="audit-header-actions">
+            <button
+              className="secondary-action"
+              disabled={isCreatingOpeningAdjustments || warningCount === 0}
+              onClick={handleCreateOpeningAdjustments}
+              type="button"
+            >
+              {isCreatingOpeningAdjustments ? "Création..." : "Créer les ajustements d’ouverture"}
+            </button>
+
+            <span className={warningCount === 0 ? "status-pill connected" : "status-pill warning"}>
+              {warningCount === 0 ? "Cohérent" : `${warningCount} alerte(s)`}
+            </span>
+          </div>
+        </div>
+
+        {openingAdjustmentMessage ? <p className="form-success">{openingAdjustmentMessage}</p> : null}
+
+        <table>
+          <thead>
+            <tr>
+              <th>Élément</th>
+              <th>Journal</th>
+              <th>Actuel</th>
+              <th>Écart</th>
+              <th>Statut</th>
+              <th>Détail</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {auditItems.map((item, index) => (
+              <tr className={item.status === "warning" ? "audit-row-warning" : ""} key={`${item.kind}-${item.label}-${index}`}>
+                <td>{item.label}</td>
+                <td>{item.journalValue}</td>
+                <td>{item.currentValue}</td>
+                <td>{item.difference}</td>
+                <td>
+                  <span className={`audit-status ${item.status}`}>
+                    {item.status === "ok" ? "OK" : item.status === "warning" ? "À vérifier" : "Info"}
+                  </span>
+                </td>
+                <td>{item.message}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        {auditItems.length === 0 ? (
+          <p className="muted">Aucune transaction exploitable pour le moment.</p>
+        ) : null}
+
+        <div className="audit-explanation">
+          <strong>Lecture rapide</strong>
+          <p>
+            Si une position est indiquée “absente du journal”, cela veut dire qu’elle existe dans la table Positions,
+            mais que les transactions actuelles ne suffisent pas à la reconstruire. C’est normal avec les données fictives
+            du début du projet. Quand le journal sera complet, ces écarts devront disparaître.
+          </p>
+        </div>
+      </article>
+    </section>
+  );
+}
+
+
+
+function positionAuditKey(accountName: string | null | undefined, securityName: string | null | undefined) {
+  return `${accountName ?? "Compte inconnu"}|||${securityName ?? "Actif inconnu"}`;
+}
+
+function splitPositionAuditKey(key: string) {
+  const [accountName, securityName] = key.split("|||");
+
+  return {
+    accountName: accountName || "Compte inconnu",
+    securityName: securityName || "Actif inconnu",
+  };
+}
+
+function formatAuditQuantity(value: number) {
+  return formatQuantity(Number(value.toFixed(8)));
+}
+
+function buildPortfolioAuditItems(
+  accounts: DashboardData["accounts"],
+  positions: PositionPageRow[],
+  transactions: DbTransaction[],
+  isPrivacyMode: boolean,
+): PortfolioAuditItem[] {
+  const items: PortfolioAuditItem[] = [];
+  const rebuiltPositions = new Map<string, RebuiltPosition>();
+  const cashFlows = new Map<string, number>();
+  const warnings: PortfolioAuditItem[] = [];
+
+  function addCash(accountName: string | null | undefined, amount: number) {
+    const name = accountName ?? "Compte inconnu";
+    cashFlows.set(name, (cashFlows.get(name) ?? 0) + amount);
+  }
+
+  function addPosition(
+    accountName: string | null | undefined,
+    securityName: string | null | undefined,
+    quantityDelta: number,
+    costDelta: number,
+  ) {
+    const key = positionAuditKey(accountName, securityName);
+    const current = rebuiltPositions.get(key) ?? {
+      accountName: accountName ?? "Compte inconnu",
+      securityName: securityName ?? "Actif inconnu",
+      quantity: 0,
+      cost: 0,
+    };
+
+    current.quantity += quantityDelta;
+    current.cost += costDelta;
+    rebuiltPositions.set(key, current);
+
+  }
+
+  for (const transaction of transactions) {
+    const amount = transaction.amount ?? 0;
+    const quantity = transaction.quantity ?? 0;
+    const price = transaction.price ?? 0;
+    const fees = transaction.fees ?? 0;
+
+    if (transaction.transaction_type === "opening_position") {
+      if (!transaction.account_name || !transaction.security_name || quantity === 0) {
+        warnings.push({
+          kind: "warning",
+          label: transaction.security_name ?? transaction.id,
+          journalValue: "—",
+          currentValue: "—",
+          difference: "—",
+          status: "warning",
+          message: "Ajustement d’ouverture incomplet : compte, actif ou quantité manquant.",
+        });
+        continue;
+      }
+
+      addPosition(transaction.account_name, transaction.security_name, quantity, quantity * price);
+      continue;
+    }
+
+    if (transaction.transaction_type === "deposit") {
+      addCash(transaction.to_account_name, amount);
+      continue;
+    }
+
+    if (transaction.transaction_type === "withdrawal") {
+      addCash(transaction.from_account_name, -amount);
+      continue;
+    }
+
+    if (transaction.transaction_type === "transfer") {
+      addCash(transaction.from_account_name, -amount);
+      addCash(transaction.to_account_name, amount);
+      continue;
+    }
+
+    if (transaction.transaction_type === "buy") {
+      if (!transaction.account_name || !transaction.security_name || quantity <= 0 || price <= 0) {
+        warnings.push({
+          kind: "warning",
+          label: transaction.security_name ?? transaction.id,
+          journalValue: "—",
+          currentValue: "—",
+          difference: "—",
+          status: "warning",
+          message: "Achat incomplet : compte, actif, quantité ou prix manquant.",
+        });
+        continue;
+      }
+
+      const totalCost = quantity * price + fees;
+      addCash(transaction.account_name, -totalCost);
+      addPosition(transaction.account_name, transaction.security_name, quantity, totalCost);
+      continue;
+    }
+
+    if (transaction.transaction_type === "sell") {
+      if (!transaction.account_name || !transaction.security_name || quantity <= 0 || price <= 0) {
+        warnings.push({
+          kind: "warning",
+          label: transaction.security_name ?? transaction.id,
+          journalValue: "—",
+          currentValue: "—",
+          difference: "—",
+          status: "warning",
+          message: "Vente incomplète : compte, actif, quantité ou prix manquant.",
+        });
+        continue;
+      }
+
+      const cashReceived = quantity * price - fees;
+      addCash(transaction.account_name, cashReceived);
+      addPosition(transaction.account_name, transaction.security_name, -quantity, 0);
+    }
+  }
+
+  const currentPositions = new Map<string, PositionPageRow>();
+
+  for (const position of positions) {
+    currentPositions.set(positionAuditKey(position.account_name, position.security_name), position);
+  }
+
+  const allPositionKeys = new Set([...rebuiltPositions.keys(), ...currentPositions.keys()]);
+
+  for (const key of allPositionKeys) {
+    const rebuilt = rebuiltPositions.get(key);
+    const current = currentPositions.get(key);
+    const labels = splitPositionAuditKey(key);
+    const rebuiltQuantity = rebuilt?.quantity ?? 0;
+    const currentQuantity = current?.quantity ?? 0;
+    const difference = rebuiltQuantity - currentQuantity;
+    const isOk = Math.abs(difference) <= 0.000001;
+
+    if (isOk && Math.abs(rebuiltQuantity) <= 0.000001 && !current) {
+      continue;
+    }
+
+    items.push({
+      kind: "position",
+      label: `${labels.securityName} · ${labels.accountName}`,
+      journalValue: rebuilt ? formatAuditQuantity(rebuiltQuantity) : "0",
+      currentValue: current ? formatAuditQuantity(currentQuantity) : "0",
+      difference: formatAuditQuantity(difference),
+      status: isOk ? "ok" : "warning",
+      message: isOk
+        ? "Quantité cohérente entre le journal et les positions."
+        : rebuiltQuantity < -0.000001
+          ? "Le journal reconstruit une quantité négative finale : vente ou ajustement à vérifier."
+          : rebuilt
+            ? "Écart entre la quantité recalculée depuis le journal et la position affichée."
+            : "Position actuelle absente du journal de transactions.",
+    });
+  }
+
+  for (const account of accounts) {
+    const flow = cashFlows.get(account.name) ?? 0;
+
+    if (Math.abs(flow) <= 0.000001) {
+      continue;
+    }
+
+    items.push({
+      kind: "cash",
+      label: `Flux cash · ${account.name}`,
+      journalValue: displayEuro(flow, isPrivacyMode),
+      currentValue: "—",
+      difference: "—",
+      status: "info",
+      message: "Flux net reconstruit depuis les dépôts, retraits, transferts, achats et ventes. Comparaison au cash réel prévue à l’étape suivante.",
+    });
+  }
+
+  return [...warnings, ...items].sort((left, right) => {
+    const score = { warning: 0, info: 1, ok: 2 };
+    return score[left.status] - score[right.status];
+  });
+}
+
+
 function ImportExportPage({
   accounts,
   onImported,
@@ -1418,9 +1773,25 @@ function ImportExportPage({
   const [importResult, setImportResult] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
 
-  const importCandidates = validateCsvTransactions(csvText, accounts, securities);
+  const missingCsvHeaders = getMissingCsvHeaders(csvText);
+  const importCandidates = missingCsvHeaders.length === 0 ? validateCsvTransactions(csvText, accounts, securities) : [];
   const previewRows = importCandidates.slice(0, 8);
   const validRows = importCandidates.filter((row) => row.status === "valid");
+
+  async function handleCsvFile(event: FormEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    const content = await file.text();
+
+    setCsvText(content);
+    setImportError(null);
+    setImportResult(null);
+    event.currentTarget.value = "";
+  }
 
   async function importCsvTransactions() {
     if (validRows.length === 0) {
@@ -1553,6 +1924,32 @@ function ImportExportPage({
             value={csvText}
           />
 
+          <div className="csv-file-actions">
+            <label className="secondary-action csv-file-button">
+              Ouvrir un CSV
+              <input accept=".csv,text/csv" onChange={handleCsvFile} type="file" />
+            </label>
+
+            <button
+              className="secondary-action"
+              disabled={!csvText}
+              onClick={() => {
+                setCsvText("");
+                setImportError(null);
+                setImportResult(null);
+              }}
+              type="button"
+            >
+              Effacer
+            </button>
+          </div>
+
+          {missingCsvHeaders.length > 0 ? (
+            <p className="form-error">
+              Colonnes manquantes : {missingCsvHeaders.join(", ")}
+            </p>
+          ) : null}
+
           <div className="csv-preview-toolbar">
             <div className="csv-preview-status">
               {importCandidates.length > 0
@@ -1562,7 +1959,7 @@ function ImportExportPage({
 
             <button
               className="primary-action"
-              disabled={isImporting || validRows.length === 0}
+              disabled={isImporting || validRows.length === 0 || missingCsvHeaders.length > 0}
               onClick={importCsvTransactions}
               type="button"
             >
@@ -1984,9 +2381,98 @@ function validateCsvTransactions(
 }
 
 
+const REQUIRED_TRANSACTION_CSV_HEADERS = [
+  "date",
+  "type",
+  "compte",
+  "compte_source",
+  "compte_destination",
+  "ticker",
+  "actif",
+  "quantite",
+  "prix",
+  "frais",
+  "montant",
+  "note",
+];
+
+function getMissingCsvHeaders(text: string) {
+  const firstLine = text
+    .replace(/^\uFEFF/, "")
+    .split(/\r?\n/)
+    .find((line) => line.trim());
+
+  if (!firstLine) {
+    return [];
+  }
+
+  const delimiter = detectCsvDelimiter(firstLine);
+  const headers = splitCsvLine(firstLine, delimiter).map((header) => header.trim().toLowerCase());
+
+  return REQUIRED_TRANSACTION_CSV_HEADERS.filter((header) => !headers.includes(header));
+}
+
+function detectCsvDelimiter(line: string) {
+  const commaCount = countCsvDelimiter(line, ",");
+  const semicolonCount = countCsvDelimiter(line, ";");
+
+  return semicolonCount > commaCount ? ";" : ",";
+}
+
+function countCsvDelimiter(line: string, delimiter: "," | ";") {
+  let count = 0;
+  let inQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index];
+
+    if (character === '"') {
+      inQuotes = !inQuotes;
+    } else if (character === delimiter && !inQuotes) {
+      count += 1;
+    }
+  }
+
+  return count;
+}
+
+function splitCsvLine(line: string, delimiter: "," | ";") {
+  const values: string[] = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index];
+    const nextCharacter = line[index + 1];
+
+    if (character === '"' && inQuotes && nextCharacter === '"') {
+      current += '"';
+      index += 1;
+      continue;
+    }
+
+    if (character === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+
+    if (character === delimiter && !inQuotes) {
+      values.push(current.trim());
+      current = "";
+      continue;
+    }
+
+    current += character;
+  }
+
+  values.push(current.trim());
+
+  return values;
+}
+
 function parseCsvPreview(text: string) {
   const lines = text
-    .trim()
+    .replace(/^\uFEFF/, "")
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
@@ -1995,10 +2481,12 @@ function parseCsvPreview(text: string) {
     return [];
   }
 
-  const headers = lines[0].split(",").map((header) => header.trim());
+  const delimiter = detectCsvDelimiter(lines[0]);
+  const headers = splitCsvLine(lines[0], delimiter).map((header) => header.trim().toLowerCase());
 
   return lines.slice(1).map((line) => {
-    const values = line.split(",").map((value) => value.trim());
+    const values = splitCsvLine(line, delimiter);
+
     return headers.reduce<Record<string, string>>((row, header, index) => {
       row[header] = values[index] ?? "";
       return row;
@@ -2098,6 +2586,7 @@ function labelForTransactionType(type: string) {
     transfer: "Transfert",
     buy: "Achat",
     sell: "Vente",
+    opening_position: "Position initiale",
     dividend: "Dividende",
     fee: "Frais",
   };

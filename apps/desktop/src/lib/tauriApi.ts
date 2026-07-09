@@ -256,3 +256,8 @@ export async function updateTransaction(input: UpdateTransactionInput) {
 export async function deleteTransaction(transactionId: string) {
   return invoke<string>("delete_transaction", { transactionId });
 }
+
+
+export async function createOpeningPositionAdjustments() {
+  return invoke<number>("create_opening_position_adjustments");
+}
