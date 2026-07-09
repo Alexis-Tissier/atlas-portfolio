@@ -2541,3 +2541,141 @@ td:first-child { color: #374151; font-weight: 600; }
   color: #cbd5e1 !important;
   border: 1px solid #303b4a !important;
 }
+
+
+/* Portfolio chart polish */
+.chart-area svg {
+  background:
+    linear-gradient(180deg, rgba(247, 249, 252, .95) 0%, rgba(255, 255, 255, .45) 100%);
+  border-radius: 16px;
+}
+
+.chart-grid-line {
+  stroke: #e8edf4;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.portfolio-chart-area {
+  fill: url(#fill);
+}
+
+.portfolio-chart-line {
+  fill: none;
+  stroke: #6f9df0;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 6px 8px rgba(111, 157, 240, .16));
+}
+
+.portfolio-chart-end-dot {
+  fill: #6f9df0;
+  stroke: #ffffff;
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.app-shell.dark .chart-area svg {
+  background:
+    linear-gradient(180deg, rgba(21, 29, 39, .98) 0%, rgba(17, 24, 32, .92) 100%);
+}
+
+.app-shell.dark .chart-grid-line {
+  stroke: #253142;
+}
+
+.app-shell.dark .portfolio-chart-end-dot {
+  stroke: #151d27;
+}
+
+
+/* Portfolio chart period controls */
+.chart-period-tabs {
+  align-items: center;
+  gap: 6px;
+}
+
+.chart-period-tabs button {
+  border: 0;
+  border-radius: 7px;
+  padding: 6px 8px;
+  background: transparent;
+  color: #8b95a3;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.chart-period-tabs button:hover {
+  background: #f1f5f9;
+  color: #4a80df;
+}
+
+.chart-period-tabs button.active {
+  background: #edf4ff;
+  color: #4a80df;
+}
+
+.chart-area svg {
+  background:
+    linear-gradient(180deg, rgba(247, 249, 252, .95) 0%, rgba(255, 255, 255, .45) 100%);
+  border-radius: 16px;
+}
+
+.chart-grid-line {
+  stroke: #e8edf4;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.portfolio-chart-area {
+  fill: url(#fill);
+}
+
+.portfolio-chart-line {
+  fill: none;
+  stroke: #6f9df0;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 6px 8px rgba(111, 157, 240, .16));
+}
+
+.portfolio-chart-end-dot {
+  fill: #6f9df0;
+  stroke: #ffffff;
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.table-action button {
+  cursor: pointer;
+}
+
+.app-shell.dark .chart-period-tabs button {
+  color: #a8b3c1;
+}
+
+.app-shell.dark .chart-period-tabs button:hover {
+  background: #202a36;
+  color: #dbeafe;
+}
+
+.app-shell.dark .chart-period-tabs button.active {
+  background: #24324a !important;
+  color: #dbeafe !important;
+}
+
+.app-shell.dark .chart-area svg {
+  background:
+    linear-gradient(180deg, rgba(21, 29, 39, .98) 0%, rgba(17, 24, 32, .92) 100%);
+}
+
+.app-shell.dark .chart-grid-line {
+  stroke: #253142;
+}
+
+.app-shell.dark .portfolio-chart-end-dot {
+  stroke: #151d27;
+}

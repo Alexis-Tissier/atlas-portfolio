@@ -405,6 +405,7 @@ function App() {
             snapshots={chartSnapshots}
             isUpdatingPrices={isUpdatingPrices}
             onPriceRefresh={() => refreshOpenPositionPrices(false)}
+            onNavigate={setCurrentPage}
             priceUpdateError={priceUpdateError}
             priceUpdateSummary={priceUpdateSummary}
           />
@@ -424,6 +425,7 @@ function DashboardPage({
   isPrivacyMode,
   isUpdatingPrices,
   onPriceRefresh,
+  onNavigate,
   positionRows,
   priceUpdateError,
   priceUpdateSummary,
@@ -437,6 +439,7 @@ function DashboardPage({
   isPrivacyMode: boolean;
   isUpdatingPrices: boolean;
   onPriceRefresh: () => void;
+  onNavigate: (page: string) => void;
   positionRows: { asset: string; category: string; account: string; quantity: string; value: string; weight: string; performance: string }[];
   priceUpdateError: string | null;
   priceUpdateSummary: PriceUpdateSummary | null;
@@ -450,6 +453,7 @@ function DashboardPage({
   }));
 
   const allocationDonutBackground = buildAllocationDonut(actualAllocationRows);
+  const [chartPeriod, setChartPeriod] = useState<ChartPeriod>("all");
 
   return (
     <section className="page">
@@ -490,15 +494,26 @@ function DashboardPage({
           <article className="card chart-card">
             <div className="card-header">
               <h2>Évolution du patrimoine <span>ⓘ</span></h2>
-              <div className="tabs">
-                <span>1M</span>
-                <span>6M</span>
-                <span>1A</span>
-                <strong>Tous</strong>
+              <div className="tabs chart-period-tabs" role="tablist" aria-label="Période du graphique">
+                {chartPeriodOptions.map((option) => (
+                  <button
+                    className={chartPeriod === option.value ? "active" : ""}
+                    key={option.value}
+                    onClick={() => setChartPeriod(option.value)}
+                    type="button"
+                  >
+                    {option.label}
+                  </button>
+                ))}
               </div>
             </div>
 
-            <PortfolioChart snapshots={snapshots} currentTotal={summary.total} isPrivacyMode={isPrivacyMode} />
+            <PortfolioChart
+              currentTotal={summary.total}
+              isPrivacyMode={isPrivacyMode}
+              period={chartPeriod}
+              snapshots={snapshots}
+            />
           </article>
 
           
@@ -535,7 +550,7 @@ function DashboardPage({
             </table>
 
             <div className="table-action">
-              <button>Voir toutes les positions →</button>
+              <button type="button" onClick={() => onNavigate("Positions")}>Voir toutes les positions →</button>
             </div>
           </article>
         </section>
@@ -1779,7 +1794,8 @@ function PerformancePage({
             <span className="status-pill connected">Depuis le début</span>
           </div>
 
-          <PortfolioChart snapshots={snapshots} currentTotal={summary.total} isPrivacyMode={isPrivacyMode} />
+          <PortfolioChart period="all"
+            snapshots={snapshots} currentTotal={summary.total} isPrivacyMode={isPrivacyMode} />
         </article>
 
         <article className="card performance-card">
@@ -1961,23 +1977,86 @@ function PerformancePage({
 }
 
 
+
+type ChartPeriod = "1m" | "6m" | "1y" | "all";
+
+const chartPeriodOptions: { value: ChartPeriod; label: string }[] = [
+  { value: "1m", label: "1M" },
+  { value: "6m", label: "6M" },
+  { value: "1y", label: "1A" },
+  { value: "all", label: "Tous" },
+];
+
+function chartPeriodDays(period: ChartPeriod) {
+  if (period === "1m") return 31;
+  if (period === "6m") return 183;
+  if (period === "1y") return 365;
+  return null;
+}
+
+function parseChartTimestamp(value: string) {
+  const timestamp = new Date(value).getTime();
+
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function filterPortfolioChartData(
+  data: { date: string; value: number }[],
+  period: ChartPeriod,
+) {
+  const days = chartPeriodDays(period);
+
+  if (!days || data.length <= 2) {
+    return data;
+  }
+
+  const timestamps = data
+    .map((point) => parseChartTimestamp(point.date))
+    .filter((timestamp): timestamp is number => timestamp !== null);
+
+  if (timestamps.length === 0) {
+    return data;
+  }
+
+  const latestTimestamp = Math.max(...timestamps);
+  const cutoff = latestTimestamp - days * 24 * 60 * 60 * 1000;
+  const filtered = data.filter((point) => {
+    const timestamp = parseChartTimestamp(point.date);
+
+    return timestamp !== null && timestamp >= cutoff;
+  });
+
+  if (filtered.length >= 2) {
+    return filtered;
+  }
+
+  return data.slice(-Math.min(data.length, 2));
+}
+
 function PortfolioChart({
   currentTotal,
   isPrivacyMode,
+  period,
   snapshots,
 }: {
   currentTotal: number;
   isPrivacyMode: boolean;
+  period: ChartPeriod;
   snapshots: DashboardData["snapshots"];
 }) {
-  const data = (snapshots.length ? snapshots : [{ date: "Aujourd’hui", total_value: currentTotal }]).map((point) => ({
+  const allData = (snapshots.length ? snapshots : [{ date: "Aujourd’hui", total_value: currentTotal }]).map((point) => ({
     date: point.date,
     value: point.total_value,
   }));
 
+  const data = filterPortfolioChartData(allData, period);
   const values = data.map((point) => point.value);
-  const maxValue = Math.max(...values, currentTotal, 1);
-  const minValue = Math.min(...values, 0);
+  const rawMaxValue = Math.max(...values, currentTotal, 1);
+  const rawMinValue = Math.min(...values);
+  const rawRange = Math.max(rawMaxValue - rawMinValue, rawMaxValue * 0.01, 1);
+  const padding = rawRange * 0.08;
+  const maxValue = rawMaxValue + padding;
+  const minValue = Math.max(0, rawMinValue - padding);
   const chartWidth = 780;
   const chartHeight = 230;
   const topPadding = 18;
@@ -2004,25 +2083,50 @@ function PortfolioChart({
       return index === 0 || index === data.length - 1 || index % Math.ceil(data.length / 4) === 0;
     });
 
-  const yLabels = [maxValue, maxValue * 0.75, maxValue * 0.5, maxValue * 0.25, 0];
+  const yLabels = [maxValue, minValue + range * 0.75, minValue + range * 0.5, minValue + range * 0.25, minValue];
 
   return (
     <div className="chart-area">
       <div className="y-axis">
-        {yLabels.map((value) => (
-          <span key={value}>{displayCompactEuro(value, isPrivacyMode)}</span>
+        {yLabels.map((value, index) => (
+          <span key={`${value}-${index}`}>{displayCompactEuro(value, isPrivacyMode)}</span>
         ))}
       </div>
 
       <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} preserveAspectRatio="none" aria-label="Évolution du patrimoine">
         <defs>
           <linearGradient id="fill" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor="#7da7f5" stopOpacity="0.26" />
+            <stop offset="0%" stopColor="#7da7f5" stopOpacity="0.28" />
             <stop offset="100%" stopColor="#7da7f5" stopOpacity="0" />
           </linearGradient>
         </defs>
-        <path d={areaPath} fill="url(#fill)" />
-        <path d={linePath} fill="none" stroke="#6f9df0" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+
+        {yLabels.map((value, index) => {
+          const y = topPadding + ((maxValue - value) / range) * usableHeight;
+
+          return (
+            <line
+              className="chart-grid-line"
+              key={`grid-${value}-${index}`}
+              x1="0"
+              x2={chartWidth}
+              y1={y}
+              y2={y}
+            />
+          );
+        })}
+
+        <path d={areaPath} className="portfolio-chart-area" />
+        <path d={linePath} className="portfolio-chart-line" />
+
+        {points.length > 0 ? (
+          <circle
+            className="portfolio-chart-end-dot"
+            cx={points[points.length - 1].x}
+            cy={points[points.length - 1].y}
+            r="5"
+          />
+        ) : null}
       </svg>
 
       <div className="months">
@@ -2033,8 +2137,6 @@ function PortfolioChart({
     </div>
   );
 }
-
-
 function PositionsPage({
   isPrivacyMode,
   positions,
