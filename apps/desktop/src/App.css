@@ -825,3 +825,138 @@ td:first-child { color: #374151; font-weight: 600; }
   border: 1px dashed #d8dde3;
   border-radius: 12px;
 }
+
+
+.allocation-summary-grid {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+
+.allocation-dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.allocation-analysis-card,
+.allocation-wide-card {
+  padding: 20px;
+}
+
+.allocation-wide-card {
+  grid-column: 1 / -1;
+}
+
+.allocation-analysis-row {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  align-items: center;
+  gap: 22px;
+  margin-top: 18px;
+}
+
+.allocation-large-donut {
+  width: 172px;
+  height: 172px;
+  border-radius: 50%;
+  position: relative;
+}
+
+.allocation-large-donut::after {
+  content: "";
+  position: absolute;
+  inset: 42px;
+  border-radius: inherit;
+  background: #fff;
+  box-shadow: inset 0 0 0 1px #eef0f2;
+}
+
+.allocation-detail-list {
+  display: grid;
+  gap: 12px;
+}
+
+.distribution-line {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) 70px 70px;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #eef0f2;
+}
+
+.distribution-line > span {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+}
+
+.distribution-line strong {
+  display: block;
+  color: #253142;
+  font-size: 13px;
+}
+
+.distribution-line small {
+  color: #9aa3ad;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.distribution-line p,
+.distribution-line em {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 800;
+  font-style: normal;
+  text-align: right;
+}
+
+.account-class-list {
+  display: grid;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.account-class-row {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr) minmax(220px, .8fr);
+  align-items: center;
+  gap: 14px;
+}
+
+.account-class-label strong {
+  display: block;
+  color: #253142;
+  font-size: 13px;
+}
+
+.account-class-label span {
+  color: #9aa3ad;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.stacked-bar {
+  display: flex;
+  height: 14px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #eef0f2;
+}
+
+.stacked-bar span {
+  min-width: 3px;
+}
+
+.account-class-breakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: #8b949f;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.allocation-table {
+  margin-top: 16px;
+}

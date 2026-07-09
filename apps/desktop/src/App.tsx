@@ -73,6 +73,22 @@ type RebuiltPosition = {
   cost: number;
 };
 
+type DistributionRow = {
+  label: string;
+  value: number;
+  percent: number;
+  color: string;
+  targetPercent?: number;
+  differencePercent?: number;
+  detail?: string;
+};
+
+type AccountClassDistribution = {
+  accountName: string;
+  totalValue: number;
+  rows: DistributionRow[];
+};
+
 
 function App() {
   const [currentPage, setCurrentPage] = useState("Portefeuille");
@@ -261,9 +277,16 @@ function App() {
           </div>
         </header>
 
-        {currentPage === "Performance" ? (
-          <PerformancePage
+        {currentPage === "Répartition" ? (
+          <AllocationPage
+            accounts={accounts}
             allocationRows={allocationRows}
+            isPrivacyMode={isPrivacyMode}
+            positions={positionsPageRows}
+            summary={summary}
+          />
+        ) : currentPage === "Performance" ? (
+          <PerformancePage
             isPrivacyMode={isPrivacyMode}
             positions={positionsPageRows}
             snapshots={chartSnapshots}
@@ -702,15 +725,236 @@ function PerformanceMiniChart({
 }
 
 
-function PerformancePage({
+
+function AllocationPage({
+  accounts,
   allocationRows,
+  isPrivacyMode,
+  positions,
+  summary,
+}: {
+  accounts: DashboardData["accounts"];
+  allocationRows: AllocationDisplayRow[];
+  isPrivacyMode: boolean;
+  positions: PositionPageRow[];
+  summary: { total: number; performance_amount: number; performance_percent: number; start_date: string };
+}) {
+  const totalValue = Math.max(summary.total, 0);
+  const normalizedClassRows = allocationRows.map((row) => ({
+    label: row.bucket,
+    value: row.value ?? 0,
+    percent: row.actualPercent ?? 0,
+    targetPercent: row.targetPercent,
+    differencePercent: row.differencePercent ?? 0,
+    color: colorForBucket(row.bucket),
+  }));
+
+  const accountRows = buildAccountDistributionRows(accounts, totalValue);
+  const accountClassRows = buildAccountClassDistribution(accounts, positions);
+  const positionRows = buildPositionDistributionRows(positions, totalValue);
+  const classDonut = buildDistributionDonut(normalizedClassRows);
+  const accountDonut = buildDistributionDonut(accountRows);
+  const largestClass = [...normalizedClassRows].sort((left, right) => right.value - left.value)[0];
+  const largestAccount = [...accountRows].sort((left, right) => right.value - left.value)[0];
+  const cashRow = normalizedClassRows.find((row) => row.label === "Cash");
+
+  return (
+    <section className="page">
+      <div className="title-block">
+        <h1>Répartition</h1>
+        <p>Analyse de la composition du portefeuille par classe d’actifs, compte, enveloppe et ligne.</p>
+      </div>
+
+      <div className="transaction-summary-grid allocation-summary-grid">
+        <MetricCard label="Patrimoine total" value={displayEuro(totalValue, isPrivacyMode)} note="base de calcul" />
+        <MetricCard label="Classe principale" value={largestClass ? formatUnsignedPercent(largestClass.percent) : "—"} note={largestClass?.label ?? "aucune"} />
+        <MetricCard label="Compte principal" value={largestAccount ? formatUnsignedPercent(largestAccount.percent) : "—"} note={largestAccount?.label ?? "aucun"} />
+        <MetricCard label="Cash" value={cashRow ? formatUnsignedPercent(cashRow.percent) : "—"} note={displayEuro(cashRow?.value ?? 0, isPrivacyMode)} />
+      </div>
+
+      <div className="allocation-dashboard-grid">
+        <article className="card allocation-analysis-card">
+          <h2>Répartition par classe</h2>
+          <p className="muted">Poids réel des grandes poches du portefeuille.</p>
+
+          <div className="allocation-analysis-row">
+            <div className="allocation-large-donut" style={{ background: classDonut }} />
+
+            <div className="allocation-detail-list">
+              <div className="distribution-line distribution-line-header">
+                <span />
+                <strong>Classe</strong>
+                <p>Actuel</p>
+                <em>Idéal</em>
+              </div>
+
+              {normalizedClassRows.map((row) => (
+                <DistributionLine
+                  key={row.label}
+                  isPrivacyMode={isPrivacyMode}
+                  row={row}
+                  showTarget
+                />
+              ))}
+            </div>
+          </div>
+        </article>
+
+        <article className="card allocation-analysis-card">
+          <h2>Répartition par compte</h2>
+          <p className="muted">Poids de chaque compte ou enveloppe.</p>
+
+          <div className="allocation-analysis-row">
+            <div className="allocation-large-donut" style={{ background: accountDonut }} />
+
+            <div className="allocation-detail-list">
+              {accountRows.map((row) => (
+                <DistributionLine
+                  key={row.label}
+                  isPrivacyMode={isPrivacyMode}
+                  row={row}
+                />
+              ))}
+            </div>
+          </div>
+        </article>
+
+        <article className="card allocation-wide-card">
+          <h2>Classes par compte</h2>
+          <p className="muted">Lecture par enveloppe : PEA, CTO, Livret A, compte crypto, compte courant.</p>
+
+          <div className="account-class-list">
+            {accountClassRows.map((account) => (
+              <div className="account-class-row" key={account.accountName}>
+                <div className="account-class-label">
+                  <strong>{account.accountName}</strong>
+                  <span>{displayEuro(account.totalValue, isPrivacyMode)}</span>
+                </div>
+
+                <div className="stacked-bar">
+                  {account.rows.map((row) => (
+                    <span
+                      key={row.label}
+                      style={{
+                        width: `${Math.max(row.percent, 0.5)}%`,
+                        background: row.color,
+                      }}
+                      title={`${row.label} · ${formatUnsignedPercent(row.percent)}`}
+                    />
+                  ))}
+                </div>
+
+                <div className="account-class-breakdown">
+                  {account.rows.map((row) => (
+                    <small key={row.label}>
+                      {row.label} · {formatUnsignedPercent(row.percent)}
+                    </small>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </article>
+
+        <article className="card allocation-wide-card">
+          <h2>Actions / ETF / Crypto / Cash par compte</h2>
+          <p className="muted">Vue détaillée pour comprendre où sont logées les classes d’actifs.</p>
+
+          <table className="allocation-table">
+            <thead>
+              <tr>
+                <th>Compte</th>
+                <th>ETF</th>
+                <th>Actions</th>
+                <th>Crypto</th>
+                <th>Cash</th>
+                <th>Total</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {accountClassRows.map((account) => {
+                const byLabel = new Map(account.rows.map((row) => [row.label, row]));
+
+                return (
+                  <tr key={account.accountName}>
+                    <td>{account.accountName}</td>
+                    <td>{displayEuro(byLabel.get("ETF")?.value ?? 0, isPrivacyMode)}</td>
+                    <td>{displayEuro(byLabel.get("Actions")?.value ?? 0, isPrivacyMode)}</td>
+                    <td>{displayEuro(byLabel.get("Crypto")?.value ?? 0, isPrivacyMode)}</td>
+                    <td>{displayEuro(byLabel.get("Cash")?.value ?? 0, isPrivacyMode)}</td>
+                    <td className="amount-cell">{displayEuro(account.totalValue, isPrivacyMode)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </article>
+
+        <article className="card allocation-wide-card">
+          <h2>Poids par ligne</h2>
+          <p className="muted">Les plus grosses positions expliquent la concentration réelle du portefeuille.</p>
+
+          <div className="position-weight-list">
+            {positionRows.map((row) => (
+              <div className="position-weight-row" key={row.label}>
+                <div>
+                  <strong>{row.label}</strong>
+                  <span>{row.detail}</span>
+                </div>
+
+                <div className="target-bar">
+                  <span style={{ width: `${Math.min(Math.max(row.percent, 0), 100)}%` }} />
+                </div>
+
+                <p>{formatUnsignedPercent(row.percent)}</p>
+                <small>{displayEuro(row.value, isPrivacyMode)}</small>
+              </div>
+            ))}
+          </div>
+        </article>
+      </div>
+    </section>
+  );
+}
+
+function DistributionLine({
+  isPrivacyMode,
+  row,
+  showTarget = false,
+}: {
+  isPrivacyMode: boolean;
+  row: DistributionRow;
+  showTarget?: boolean;
+}) {
+  return (
+    <div className="distribution-line">
+      <span style={{ background: row.color }} />
+
+      <div>
+        <strong>{row.label}</strong>
+        <small>{displayEuro(row.value, isPrivacyMode)}</small>
+      </div>
+
+      <p>{formatUnsignedPercent(row.percent)}</p>
+
+      {showTarget ? (
+        <em className="distribution-target">
+          {formatUnsignedPercent(row.targetPercent ?? 0)}
+        </em>
+      ) : null}
+    </div>
+  );
+}
+
+
+function PerformancePage({
   isPrivacyMode,
   positions,
   snapshots,
   summary,
   transactions,
 }: {
-  allocationRows: AllocationDisplayRow[];
   isPrivacyMode: boolean;
   positions: PositionPageRow[];
   snapshots: DashboardData["snapshots"];
@@ -727,13 +971,6 @@ function PerformancePage({
   const topPositionWeight = topPosition && summary.total > 0 ? (topPosition.value / summary.total) * 100 : 0;
   const winners = [...positions].sort((left, right) => right.performance_amount - left.performance_amount).slice(0, 3);
   const losers = [...positions].sort((left, right) => left.performance_amount - right.performance_amount).slice(0, 3);
-  const normalizedAllocationRows = allocationRows.map((row) => ({
-    ...row,
-    actualPercent: row.actualPercent ?? 0,
-    differencePercent: row.differencePercent ?? 0,
-    value: row.value ?? 0,
-  }));
-
   const performanceAnalytics = buildPerformanceAnalytics(summary.total, snapshots, transactions);
 
   return (
@@ -784,30 +1021,6 @@ function PerformancePage({
           />
         </article>
 
-        <article className="card performance-card">
-          <h2>Performance par classe</h2>
-          <p className="muted">Comparaison entre la répartition actuelle et l’objectif cible.</p>
-
-          <div className="allocation-performance-list">
-            {normalizedAllocationRows.map((row) => (
-              <div className="allocation-performance-row" key={row.bucket}>
-                <div>
-                  <strong>{row.bucket}</strong>
-                  <span>{displayEuro(row.value, isPrivacyMode)}</span>
-                </div>
-
-                <div className="target-bar">
-                  <span style={{ width: `${Math.min(Math.max(row.actualPercent, 0), 100)}%` }} />
-                </div>
-
-                <p>{formatUnsignedPercent(row.actualPercent)}</p>
-                <small className={row.differencePercent >= 0 ? "positive" : "negative"}>
-                  {formatSignedPercent(row.differencePercent)}
-                </small>
-              </div>
-            ))}
-          </div>
-        </article>
 
         <article className="card performance-card">
           <h2>Top gagnants</h2>
@@ -847,28 +1060,6 @@ function PerformancePage({
           </div>
         </article>
 
-        <article className="card performance-card performance-wide-card">
-          <h2>Poids des lignes</h2>
-          <p className="muted">Les lignes les plus lourdes doivent rester surveillées pour éviter une concentration invisible.</p>
-
-          <div className="position-weight-list">
-            {sortedByValue.map((position) => (
-              <div className="position-weight-row" key={position.position_id}>
-                <div>
-                  <strong>{position.security_name}</strong>
-                  <span>{position.asset_class} · {position.account_name}</span>
-                </div>
-
-                <div className="target-bar">
-                  <span style={{ width: `${Math.min(Math.max(summary.total > 0 ? (position.value / summary.total) * 100 : 0, 0), 100)}%` }} />
-                </div>
-
-                <p>{formatUnsignedPercent(summary.total > 0 ? (position.value / summary.total) * 100 : 0)}</p>
-                <small>{displayEuro(position.value, isPrivacyMode)}</small>
-              </div>
-            ))}
-          </div>
-        </article>
       </div>
     </section>
   );
@@ -2501,6 +2692,100 @@ function displayCompactEuro(value: number, isPrivacyMode: boolean) {
 
 function displayText(value: string, isPrivacyMode: boolean) {
   return isPrivacyMode ? MASKED_AMOUNT : value;
+}
+
+
+
+function percentOfTotal(value: number, total: number) {
+  return total > 0 ? (value / total) * 100 : 0;
+}
+
+function colorForDistributionIndex(index: number) {
+  const colors = ["#7da7f5", "#8bcf91", "#b997f5", "#f5cf73", "#f2a0a0", "#9fd8cb", "#c7b8a0"];
+  return colors[index % colors.length];
+}
+
+function buildDistributionDonut(rows: DistributionRow[]) {
+  const visibleRows = rows.filter((row) => row.value > 0);
+
+  if (visibleRows.length === 0) {
+    return "#eef0f2";
+  }
+
+  let cursor = 0;
+  const segments = visibleRows.map((row) => {
+    const start = cursor;
+    const end = cursor + row.percent;
+    cursor = end;
+
+    return `${row.color} ${start}% ${end}%`;
+  });
+
+  return `conic-gradient(${segments.join(", ")})`;
+}
+
+function buildAccountDistributionRows(accounts: DashboardData["accounts"], totalValue: number): DistributionRow[] {
+  return accounts
+    .map((account, index) => ({
+      label: account.name,
+      value: account.total_value,
+      percent: percentOfTotal(account.total_value, totalValue),
+      color: colorForDistributionIndex(index),
+      detail: labelForAccountType(account.account_type),
+    }))
+    .filter((row) => row.value > 0)
+    .sort((left, right) => right.value - left.value);
+}
+
+function buildAccountClassDistribution(
+  accounts: DashboardData["accounts"],
+  positions: PositionPageRow[],
+): AccountClassDistribution[] {
+  return accounts
+    .map((account) => {
+      const accountPositions = positions.filter((position) => position.account_name === account.name);
+      const values = new Map<string, number>();
+
+      for (const position of accountPositions) {
+        values.set(position.asset_class, (values.get(position.asset_class) ?? 0) + position.value);
+      }
+
+      const investedValue = accountPositions.reduce((sum, position) => sum + position.value, 0);
+      const cashValue = Math.max(account.total_value - investedValue, 0);
+
+      if (cashValue > 0.000001) {
+        values.set("Cash", (values.get("Cash") ?? 0) + cashValue);
+      }
+
+      const rows = ["ETF", "Actions", "Crypto", "Cash"]
+        .map((label) => ({
+          label,
+          value: values.get(label) ?? 0,
+          percent: percentOfTotal(values.get(label) ?? 0, account.total_value),
+          color: colorForBucket(label),
+        }))
+        .filter((row) => row.value > 0.000001);
+
+      return {
+        accountName: account.name,
+        totalValue: account.total_value,
+        rows,
+      };
+    })
+    .filter((account) => account.totalValue > 0)
+    .sort((left, right) => right.totalValue - left.totalValue);
+}
+
+function buildPositionDistributionRows(positions: PositionPageRow[], totalValue: number): DistributionRow[] {
+  return [...positions]
+    .sort((left, right) => right.value - left.value)
+    .map((position) => ({
+      label: position.security_name,
+      value: position.value,
+      percent: percentOfTotal(position.value, totalValue),
+      color: colorForBucket(position.asset_class),
+      detail: `${position.asset_class} · ${position.account_name}`,
+    }));
 }
 
 
