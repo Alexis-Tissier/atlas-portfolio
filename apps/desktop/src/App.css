@@ -1714,3 +1714,90 @@ td:first-child { color: #374151; font-weight: 600; }
 .page-content {
   min-width: 0;
 }
+
+
+/* Performance tables cleanup */
+.performance-wide-card {
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 22px;
+  overflow-x: auto;
+}
+
+.performance-wide-card .card-header {
+  margin-bottom: 8px;
+}
+
+.performance-breakdown-table {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+
+.performance-breakdown-table th,
+.performance-breakdown-table td {
+  padding: 11px 8px;
+  border-bottom: 1px solid #eef0f2;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.performance-breakdown-table th {
+  color: #9aa3ad;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: .01em;
+}
+
+.performance-breakdown-table td {
+  color: #5f6b7a;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.performance-breakdown-table td:first-child {
+  color: #253142;
+  font-weight: 800;
+}
+
+.performance-breakdown-table td:nth-child(n+4),
+.performance-breakdown-table th:nth-child(n+4) {
+  text-align: right;
+}
+
+.performance-breakdown-table td:nth-child(1),
+.performance-breakdown-table th:nth-child(1) {
+  width: 24%;
+}
+
+.performance-breakdown-table td:nth-child(2),
+.performance-breakdown-table th:nth-child(2) {
+  width: 10%;
+}
+
+.performance-breakdown-table td:nth-child(3),
+.performance-breakdown-table th:nth-child(3) {
+  width: 12%;
+}
+
+.performance-breakdown-table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.performance-breakdown-table .positive,
+.performance-breakdown-table .negative {
+  white-space: nowrap;
+  font-weight: 900;
+}
+
+@media (max-width: 1200px) {
+  .performance-breakdown-table {
+    min-width: 760px;
+  }
+
+  .performance-wide-card {
+    overflow-x: auto;
+  }
+}
