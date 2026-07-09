@@ -1696,3 +1696,21 @@ td:first-child { color: #374151; font-weight: 600; }
 .forecast-result-grid {
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
 }
+
+
+/* Sticky sidebar */
+.sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  max-height: 100vh;
+  overflow-y: auto;
+  align-self: start;
+}
+
+.main,
+.main-content,
+.content,
+.page-content {
+  min-width: 0;
+}

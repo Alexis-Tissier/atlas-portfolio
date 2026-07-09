@@ -486,16 +486,7 @@ function DashboardPage({
             <PortfolioChart snapshots={snapshots} currentTotal={summary.total} isPrivacyMode={isPrivacyMode} />
           </article>
 
-          <article className="card milestones-card">
-            <h2>Paliers</h2>
-            <p>Votre stratégie évolue avec la taille de votre patrimoine.</p>
-
-            <div className="milestones">
-              <Milestone color="green" icon="↗" amount="5 000 €" isPrivacyMode={isPrivacyMode} title="Construction" badge="Épargne régulière" text="Priorité à la constitution d’un socle diversifié et automatisé." />
-              <Milestone color="purple" icon="△" amount="10 000 €" isPrivacyMode={isPrivacyMode} title="Accélération" badge="Efficience & qualité" text="Optimisation des poches, qualité des actifs, fiscalité." />
-              <Milestone color="gold" icon="◇" amount="100 000 €" isPrivacyMode={isPrivacyMode} title="Rayonnement" badge="Préservation & options" text="Préservation, diversification avancée, immobilier, hedge." />
-            </div>
-          </article>
+          
 
           <article className="card positions-card">
             <h2>Principales positions</h2>
@@ -1280,7 +1271,7 @@ function RecommendationsPage({
 
         <article className="card recommendation-avoid-card">
           <h2>À ne pas renforcer maintenant</h2>
-          <p className="muted">Ces lignes ou poches sont déjà trop lourdes ou moins prioritaires.</p>
+          <p className="muted">Ces lignes ou classes sont déjà trop lourdes ou moins prioritaires.</p>
 
           <div className="recommendation-avoid-list">
             {plan.avoidances.length > 0 ? (
@@ -1351,8 +1342,8 @@ function buildRecommendationPlan(
 
   for (const row of overweighted) {
     avoidances.push({
-      label: `Poche ${row.bucket}`,
-      reason: `${row.bucket} est déjà au-dessus de la cible : actuel ${formatUnsignedPercent(row.actualPercent)}, cible ${formatUnsignedPercent(row.targetPercent)}. Priorité aux autres poches.`,
+      label: `Classe ${row.bucket}`,
+      reason: `${row.bucket} est déjà au-dessus de la cible : actuel ${formatUnsignedPercent(row.actualPercent)}, cible ${formatUnsignedPercent(row.targetPercent)}. Priorité aux autres classes.`,
       severity: "warning",
     });
   }
@@ -1384,10 +1375,10 @@ function buildRecommendationPlan(
     avoidances,
     guidance,
     mainMessage: actions.length > 0
-      ? `Avec ${formatEuro(contributionAmount)}, la priorité est de corriger les poches sous-pondérées plutôt que de renforcer les lignes déjà visibles.`
+      ? `Avec ${formatEuro(contributionAmount)}, la priorité est de corriger les classes sous-pondérées plutôt que de renforcer les lignes déjà visibles.`
       : "Le portefeuille est proche de son allocation cible ou le montant d’apport est nul. Aucun achat prioritaire n’est proposé.",
     targetGapMessage: underweighted.length > 0
-      ? `Poche la plus en retard : ${underweighted[0].bucket}, avec ${formatUnsignedPercent(underweighted[0].missingPercent)} sous la cible.`
+      ? `Classe la plus en retard : ${underweighted[0].bucket}, avec ${formatUnsignedPercent(underweighted[0].missingPercent)} sous la cible.`
       : "Aucune poche n’est fortement sous-pondérée par rapport à la cible.",
     concentrationMessage: concentratedPositions.length > 0
       ? `Ligne la plus concentrée : ${concentratedPositions[0].security_name}, à ${formatUnsignedPercent(concentratedPositions[0].weight)} du portefeuille.`
@@ -1400,7 +1391,7 @@ function buildPortfolioGuidance(totalValue: number): PortfolioGuidanceRule {
     return {
       title: "Démarrage propre",
       subtitle: "Éviter la dispersion et construire une base simple.",
-      rules: ["Limiter le nombre de lignes.", "Prioriser un ETF large plutôt que plusieurs petites positions.", "Garder une poche de cash lisible."],
+      rules: ["Limiter le nombre de lignes.", "Prioriser un ETF large plutôt que plusieurs petites positions.", "Garder une réserve de cash lisible."],
     };
   }
 
@@ -1416,7 +1407,7 @@ function buildPortfolioGuidance(totalValue: number): PortfolioGuidanceRule {
     return {
       title: "Allocation cible",
       subtitle: "Le portefeuille commence à devoir suivre une vraie structure.",
-      rules: ["Comparer l’allocation réelle à l’allocation cible.", "Renforcer en priorité les poches sous-pondérées.", "Éviter de renforcer les lignes déjà dominantes."],
+      rules: ["Comparer l’allocation réelle à l’allocation cible.", "Renforcer en priorité les classes sous-pondérées.", "Éviter de renforcer les lignes déjà dominantes."],
     };
   }
 
@@ -1468,11 +1459,11 @@ function instrumentHintForRecommendation(assetClass: string, hasPea: boolean) {
   const hints: Record<string, string> = {
     ETF: `ETF Monde ou ETF S&P 500${peaText}. L’objectif est d’augmenter la diversification internationale.`,
     Actions: "Actions de qualité, mais seulement hors lignes déjà trop lourdes. Évite de renforcer une concentration existante.",
-    Crypto: "BTC / ETH uniquement si la poche crypto reste sous la cible et si tu acceptes la volatilité.",
-    Cash: "Cash disponible, Livret A ou poche de sécurité. À privilégier si la liquidité est trop basse.",
+    Crypto: "BTC / ETH uniquement si la classe crypto reste sous la cible et si tu acceptes la volatilité.",
+    Cash: "Cash disponible, Livret A ou réserve de sécurité. À privilégier si la liquidité est trop basse.",
   };
 
-  return hints[assetClass] ?? "Renforcement selon la poche sous-pondérée.";
+  return hints[assetClass] ?? "Renforcement selon la classe sous-pondérée.";
 }
 
 
@@ -3402,35 +3393,6 @@ function MetricCard({ label, note, value }: { label: string; note: string; value
     </article>
   );
 }
-
-function Milestone({
-  color,
-  icon,
-  amount,
-  isPrivacyMode,
-  title,
-  badge,
-  text,
-}: {
-  color: string;
-  icon: string;
-  amount: string;
-  isPrivacyMode: boolean;
-  title: string;
-  badge: string;
-  text: string;
-}) {
-  return (
-    <div className="milestone">
-      <div className={`milestone-icon ${color}`}>{icon}</div>
-      <strong>{displayText(amount, isPrivacyMode)}</strong>
-      <h3>{title}</h3>
-      <p>{text}</p>
-      <span className={`badge ${color}`}>{badge}</span>
-    </div>
-  );
-}
-
 
 function AllocationLegend({
   amount,
