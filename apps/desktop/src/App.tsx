@@ -149,6 +149,7 @@ function App() {
   const [priceUpdateError, setPriceUpdateError] = useState<string | null>(null);
   const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
   const [isPrivacyMode, setIsPrivacyMode] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState(() => readStoredBoolean("appearance.darkMode", false));
 
   async function refreshData() {
     try {
@@ -230,6 +231,10 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    saveStoredValue("appearance.darkMode", isDarkMode);
+  }, [isDarkMode]);
+
   const mockSummary = getPortfolioSummary();
   const mockPositionRows = getPositionRows();
   const mockAllocationRows = getAllocationRows();
@@ -267,7 +272,7 @@ function App() {
   const chartSnapshots = dashboardData?.snapshots ?? [];
 
   return (
-    <div className="app-shell">
+    <div className={isDarkMode ? "app-shell dark" : "app-shell"}>
       <aside className="sidebar">
         <nav className="nav">
           {nav.map((item) => (
@@ -310,15 +315,25 @@ function App() {
 
           <div className="top-right">
             <div className="search">⌕ Rechercher...</div>
-            <button>☼</button>
+
             <button
-              className={isPrivacyMode ? "privacy-toggle active" : "privacy-toggle"}
-              onClick={() => setIsPrivacyMode((value) => !value)}
-              title={isPrivacyMode ? "Afficher les montants" : "Masquer les montants"}
+              className="theme-toggle topbar-text-toggle"
+              onClick={() => setIsDarkMode((value) => !value)}
+              title={isDarkMode ? "Passer en mode clair" : "Passer en mode sombre"}
               type="button"
             >
-              {isPrivacyMode ? "•••" : "♢"}
+              {isDarkMode ? "Mode clair" : "Mode sombre"}
             </button>
+
+            <button
+              className={isPrivacyMode ? "privacy-toggle active topbar-text-toggle" : "privacy-toggle topbar-text-toggle"}
+              onClick={() => setIsPrivacyMode((value) => !value)}
+              title={isPrivacyMode ? "Afficher les prix" : "Masquer les prix"}
+              type="button"
+            >
+              {isPrivacyMode ? "Afficher prix" : "Masquer prix"}
+            </button>
+
             <div className="avatar">AP</div>
           </div>
         </header>
@@ -2994,7 +3009,7 @@ function PortfolioAuditPage({
                 <td>{item.journalValue}</td>
                 <td>{item.currentValue}</td>
                 <td>{item.difference}</td>
-                <td>
+                <td className="audit-status-cell">
                   <span className={`audit-status ${item.status}`}>
                     {item.status === "ok" ? "OK" : item.status === "warning" ? "À vérifier" : "Info"}
                   </span>

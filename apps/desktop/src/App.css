@@ -2423,3 +2423,121 @@ td:first-child { color: #374151; font-weight: 600; }
 .app-shell.dark .allocation-large-donut[style] {
   color: inherit !important;
 }
+
+
+/* Dark mode OK badges cleanup */
+.app-shell.dark .status-pill.connected,
+.app-shell.dark .csv-status.valid,
+.app-shell.dark .audit-status.ok,
+.app-shell.dark .status-pill.ok {
+  background: #143624 !important;
+  color: #8ee6a8 !important;
+  border: 1px solid #245337 !important;
+  box-shadow: none !important;
+}
+
+/* Badges OK dans les tableaux : moins gros, moins blancs */
+.app-shell.dark td .status-pill.connected,
+.app-shell.dark td .status-pill.ok,
+.app-shell.dark td .audit-status.ok {
+  min-width: 38px;
+  height: 22px;
+  justify-content: center;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: .01em;
+}
+
+/* Badge alerte en cohérence visuelle */
+.app-shell.dark .status-pill.warning,
+.app-shell.dark .csv-status.error,
+.app-shell.dark .warning-badge {
+  background: #3a2a12 !important;
+  color: #f6cb73 !important;
+  border: 1px solid #5a4319 !important;
+  box-shadow: none !important;
+}
+
+
+/* Topbar text controls final */
+.topbar-text-toggle {
+  height: 32px;
+  min-width: 104px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  border: 1px solid #dfe3e8 !important;
+  border-radius: 8px;
+  background: #fff !important;
+  color: #687386 !important;
+  font-size: 12px !important;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.topbar-text-toggle:hover {
+  background: #f7f8fa !important;
+  color: #253142 !important;
+}
+
+.top-right {
+  gap: 10px;
+}
+
+/* Alignement propre des badges du Journal */
+.audit-status-cell {
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+.audit-status-cell .audit-status {
+  margin: 0 auto;
+}
+
+.audit-status {
+  min-width: 42px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1;
+}
+
+/* Mode sombre */
+.app-shell.dark .topbar-text-toggle {
+  background: #202a36 !important;
+  border-color: #303b4a !important;
+  color: #f3f4f6 !important;
+}
+
+.app-shell.dark .topbar-text-toggle:hover {
+  background: #2a3645 !important;
+  color: #ffffff !important;
+}
+
+.app-shell.dark .audit-status.ok {
+  background: #143624 !important;
+  color: #8ee6a8 !important;
+  border: 1px solid #245337 !important;
+}
+
+.app-shell.dark .audit-status.warning {
+  background: #3a2a12 !important;
+  color: #f6cb73 !important;
+  border: 1px solid #5a4319 !important;
+}
+
+.app-shell.dark .audit-status.info {
+  background: #202a36 !important;
+  color: #cbd5e1 !important;
+  border: 1px solid #303b4a !important;
+}
