@@ -2148,9 +2148,9 @@ fn apply_stored_transaction_effect(
                 price,
             )?;
         }
-        "opening_position" => {
-            // Ligne technique pour expliquer les positions déjà présentes au début du suivi.
-            // Elle ne modifie pas le cash ni la position actuelle : elle sert au diagnostic/recalcul.
+        "opening_position" | "opening_cash" => {
+            // Lignes techniques pour expliquer l'état initial.
+            // Elles ne modifient pas l'état actuel : elles servent uniquement au diagnostic/recalcul.
         }
         _ => {
             return Err(format!(
@@ -2382,6 +2382,157 @@ fn create_opening_position_adjustments() -> Result<usize, String> {
     sqlite_transaction
         .commit()
         .map_err(|error| format!("Erreur validation ajustements d'ouverture : {error}"))?;
+
+    Ok(created_count)
+}
+
+#[tauri::command]
+fn create_opening_cash_adjustments() -> Result<usize, String> {
+    let mut connection = open_database()?;
+    let accounts = read_accounts(&connection)?;
+    let sqlite_transaction = connection
+        .transaction()
+        .map_err(|error| format!("Impossible de démarrer la transaction SQLite : {error}"))?;
+
+    let mut cash_by_account = HashMap::<String, f64>::new();
+
+    {
+        let mut statement = sqlite_transaction
+            .prepare(
+                "
+                SELECT
+                  type,
+                  account_id,
+                  from_account_id,
+                  to_account_id,
+                  amount,
+                  quantity,
+                  price,
+                  fees
+                FROM transactions
+                ORDER BY date, created_at
+                ",
+            )
+            .map_err(|error| format!("Erreur SQL reconstruction cash : {error}"))?;
+
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, f64>(4)?,
+                    row.get::<_, Option<f64>>(5)?,
+                    row.get::<_, Option<f64>>(6)?,
+                    row.get::<_, f64>(7)?,
+                ))
+            })
+            .map_err(|error| format!("Erreur lecture cash journal : {error}"))?;
+
+        for row in rows {
+            let (
+                transaction_type,
+                account_id,
+                from_account_id,
+                to_account_id,
+                amount,
+                quantity,
+                price,
+                fees,
+            ) = row.map_err(|error| format!("Erreur conversion cash journal : {error}"))?;
+
+            match transaction_type.as_str() {
+                "deposit" => {
+                    if let Some(to_account_id) = to_account_id {
+                        *cash_by_account.entry(to_account_id).or_insert(0.0) += amount;
+                    }
+                }
+                "withdrawal" => {
+                    if let Some(from_account_id) = from_account_id {
+                        *cash_by_account.entry(from_account_id).or_insert(0.0) -= amount;
+                    }
+                }
+                "transfer" => {
+                    if let Some(from_account_id) = from_account_id {
+                        *cash_by_account.entry(from_account_id).or_insert(0.0) -= amount;
+                    }
+
+                    if let Some(to_account_id) = to_account_id {
+                        *cash_by_account.entry(to_account_id).or_insert(0.0) += amount;
+                    }
+                }
+                "buy" => {
+                    if let (Some(account_id), Some(quantity), Some(price)) =
+                        (account_id, quantity, price)
+                    {
+                        *cash_by_account.entry(account_id).or_insert(0.0) -=
+                            quantity * price + fees;
+                    }
+                }
+                "sell" => {
+                    if let (Some(account_id), Some(quantity), Some(price)) =
+                        (account_id, quantity, price)
+                    {
+                        *cash_by_account.entry(account_id).or_insert(0.0) +=
+                            quantity * price - fees;
+                    }
+                }
+                "opening_cash" => {
+                    if let Some(account_id) = account_id {
+                        *cash_by_account.entry(account_id).or_insert(0.0) += amount;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("Erreur horloge système : {error}"))?
+        .as_millis();
+
+    let mut created_count = 0usize;
+
+    for (index, account) in accounts.iter().enumerate() {
+        let reconstructed_cash = cash_by_account.get(&account.id).copied().unwrap_or(0.0);
+        let adjustment = account.cash_balance - reconstructed_cash;
+
+        if adjustment.abs() <= 0.01 {
+            continue;
+        }
+
+        let transaction_id = format!("tx-opening-cash-{now_ms}-{index}");
+        let note = format!(
+            "Ajustement cash d'ouverture généré depuis le diagnostic : {}.",
+            account.name
+        );
+
+        sqlite_transaction
+            .execute(
+                "
+                INSERT INTO transactions (
+                  id,
+                  date,
+                  type,
+                  account_id,
+                  fees,
+                  amount,
+                  note
+                )
+                VALUES (?1, date('now'), 'opening_cash', ?2, 0, ?3, ?4)
+                ",
+                params![transaction_id, account.id, adjustment, note],
+            )
+            .map_err(|error| format!("Erreur création ajustement cash : {error}"))?;
+
+        created_count += 1;
+    }
+
+    sqlite_transaction
+        .commit()
+        .map_err(|error| format!("Erreur validation ajustements cash : {error}"))?;
 
     Ok(created_count)
 }
@@ -2844,6 +2995,7 @@ pub fn run() {
             update_transaction,
             delete_transaction,
             create_opening_position_adjustments,
+            create_opening_cash_adjustments,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

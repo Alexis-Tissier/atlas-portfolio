@@ -261,3 +261,7 @@ export async function deleteTransaction(transactionId: string) {
 export async function createOpeningPositionAdjustments() {
   return invoke<number>("create_opening_position_adjustments");
 }
+
+export async function createOpeningCashAdjustments() {
+  return invoke<number>("create_opening_cash_adjustments");
+}

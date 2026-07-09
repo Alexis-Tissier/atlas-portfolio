@@ -7,6 +7,7 @@ import {
   createSecurityFromOnlineResult,
   createTradeTransaction,
   createOpeningPositionAdjustments,
+  createOpeningCashAdjustments,
   deleteTransaction,
   getDashboardData,
   getPositionsPage,
@@ -1250,7 +1251,9 @@ function TransactionsPage({
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<DbTransaction | null>(null);
 
-  const visibleTransactions = transactions.filter((transaction) => transaction.transaction_type !== "opening_position");
+  const visibleTransactions = transactions.filter(
+    (transaction) => !["opening_position", "opening_cash"].includes(transaction.transaction_type)
+  );
   const technicalTransactionCount = transactions.length - visibleTransactions.length;
 
   async function handleDeleteTransaction(transaction: DbTransaction) {
@@ -1985,10 +1988,13 @@ function PortfolioAuditPage({
   transactions: DbTransaction[];
 }) {
   const [openingAdjustmentMessage, setOpeningAdjustmentMessage] = useState<string | null>(null);
+  const [openingCashAdjustmentMessage, setOpeningCashAdjustmentMessage] = useState<string | null>(null);
   const [isCreatingOpeningAdjustments, setIsCreatingOpeningAdjustments] = useState(false);
+  const [isCreatingOpeningCashAdjustments, setIsCreatingOpeningCashAdjustments] = useState(false);
   const auditItems = buildPortfolioAuditItems(accounts, positions, transactions, isPrivacyMode);
   const warningCount = auditItems.filter((item) => item.status === "warning").length;
   const positionWarningCount = auditItems.filter((item) => item.kind === "position" && item.status === "warning").length;
+  const cashWarningCount = auditItems.filter((item) => item.kind === "cash" && item.status === "warning").length;
   const okCount = auditItems.filter((item) => item.status === "ok").length;
   const reconstructedPositionCount = auditItems.filter((item) => item.kind === "position").length;
   const cashFlowCount = auditItems.filter((item) => item.kind === "cash").length;
@@ -2009,6 +2015,25 @@ function PortfolioAuditPage({
       setOpeningAdjustmentMessage(String(error));
     } finally {
       setIsCreatingOpeningAdjustments(false);
+    }
+  }
+
+  async function handleCreateOpeningCashAdjustments() {
+    setIsCreatingOpeningCashAdjustments(true);
+    setOpeningCashAdjustmentMessage(null);
+
+    try {
+      const createdCount = await createOpeningCashAdjustments();
+      await onRefresh();
+      setOpeningCashAdjustmentMessage(
+        createdCount > 0
+          ? `${createdCount} ajustement(s) de cash d’ouverture créé(s).`
+          : "Aucun ajustement cash nécessaire."
+      );
+    } catch (error) {
+      setOpeningCashAdjustmentMessage(String(error));
+    } finally {
+      setIsCreatingOpeningCashAdjustments(false);
     }
   }
 
@@ -2051,6 +2076,17 @@ function PortfolioAuditPage({
               <span className="status-pill connected">Positions cohérentes</span>
             )}
 
+            {cashWarningCount > 0 ? (
+              <button
+                className="secondary-action"
+                disabled={isCreatingOpeningCashAdjustments}
+                onClick={handleCreateOpeningCashAdjustments}
+                type="button"
+              >
+                {isCreatingOpeningCashAdjustments ? "Création..." : "Créer les ajustements cash"}
+              </button>
+            ) : null}
+
             <span className={warningCount === 0 ? "status-pill connected" : "status-pill warning"}>
               {warningCount === 0 ? "Cohérent" : `${warningCount} alerte(s)`}
             </span>
@@ -2058,6 +2094,7 @@ function PortfolioAuditPage({
         </div>
 
         {openingAdjustmentMessage ? <p className="form-success">{openingAdjustmentMessage}</p> : null}
+        {openingCashAdjustmentMessage ? <p className="form-success">{openingCashAdjustmentMessage}</p> : null}
 
         <table>
           <thead>
@@ -2166,6 +2203,24 @@ function buildPortfolioAuditItems(
     const quantity = transaction.quantity ?? 0;
     const price = transaction.price ?? 0;
     const fees = transaction.fees ?? 0;
+
+    if (transaction.transaction_type === "opening_cash") {
+      if (!transaction.account_name) {
+        warnings.push({
+          kind: "warning",
+          label: transaction.id,
+          journalValue: "—",
+          currentValue: "—",
+          difference: "—",
+          status: "warning",
+          message: "Ajustement cash incomplet : compte manquant.",
+        });
+        continue;
+      }
+
+      addCash(transaction.account_name, amount);
+      continue;
+    }
 
     if (transaction.transaction_type === "opening_position") {
       if (!transaction.account_name || !transaction.security_name || quantity === 0) {
@@ -3235,6 +3290,7 @@ function labelForTransactionType(type: string) {
     buy: "Achat",
     sell: "Vente",
     opening_position: "Position initiale",
+    opening_cash: "Cash initial",
     dividend: "Dividende",
     fee: "Frais",
   };

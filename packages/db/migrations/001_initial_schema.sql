@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS transactions (
   id TEXT PRIMARY KEY,
   date TEXT NOT NULL,
   type TEXT NOT NULL CHECK (
-    type IN ('deposit', 'withdrawal', 'transfer', 'buy', 'sell', 'dividend', 'fee', 'opening_position')
+    type IN ('deposit', 'withdrawal', 'transfer', 'buy', 'sell', 'dividend', 'fee', 'opening_position', 'opening_cash')
   ),
   from_account_id TEXT,
   to_account_id TEXT,
