@@ -1801,3 +1801,625 @@ td:first-child { color: #374151; font-weight: 600; }
     overflow-x: auto;
   }
 }
+
+
+/* Dark mode */
+.theme-toggle {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.app-shell.dark {
+  background: #0f141b;
+  color: #e5e7eb;
+}
+
+.app-shell.dark .main,
+.app-shell.dark .page {
+  background: #0f141b;
+}
+
+.app-shell.dark .sidebar,
+.app-shell.dark .topbar {
+  background: #111820;
+  border-color: #253142;
+}
+
+.app-shell.dark .card,
+.app-shell.dark .quote-card {
+  background: #151d27;
+  border-color: #253142;
+  box-shadow: none;
+}
+
+.app-shell.dark h1,
+.app-shell.dark h2,
+.app-shell.dark h3,
+.app-shell.dark strong,
+.app-shell.dark .big-number,
+.app-shell.dark .metric-card strong,
+.app-shell.dark .forecast-main-result strong,
+.app-shell.dark .recommendation-action-title strong,
+.app-shell.dark .recommendation-action-amount strong,
+.app-shell.dark .recommendation-guidance-box strong,
+.app-shell.dark .forecast-result-grid strong,
+.app-shell.dark .performance-breakdown-table td:first-child {
+  color: #f3f4f6;
+}
+
+.app-shell.dark p,
+.app-shell.dark span,
+.app-shell.dark td,
+.app-shell.dark .muted,
+.app-shell.dark .label {
+  color: #a8b3c1;
+}
+
+.app-shell.dark .nav-link {
+  color: #a8b3c1;
+}
+
+.app-shell.dark .nav-link.active {
+  color: #f3f4f6;
+  background: #202a36;
+}
+
+.app-shell.dark input,
+.app-shell.dark select,
+.app-shell.dark textarea,
+.app-shell.dark .search,
+.app-shell.dark .forecast-toggle-control {
+  color: #f3f4f6;
+  background: #0f141b;
+  border-color: #303b4a;
+}
+
+.app-shell.dark input:disabled {
+  color: #8f9aaa;
+  background: #111820;
+}
+
+.app-shell.dark table th,
+.app-shell.dark table td {
+  border-color: #253142;
+}
+
+.app-shell.dark table th {
+  color: #8f9aaa;
+}
+
+.app-shell.dark .overview-line,
+.app-shell.dark .recommendation-action,
+.app-shell.dark .recommendation-diagnostic-list div,
+.app-shell.dark .recommendation-guidance-box,
+.app-shell.dark .recommendation-avoid,
+.app-shell.dark .forecast-result-grid div,
+.app-shell.dark .forecast-scenario,
+.app-shell.dark .goal-rule-list li {
+  background: #111820;
+  border-color: #253142;
+}
+
+.app-shell.dark .chart-area svg,
+.app-shell.dark .forecast-chart svg {
+  background: linear-gradient(180deg, #151d27 0%, #111820 100%);
+}
+
+.app-shell.dark .chart-grid-line,
+.app-shell.dark .forecast-chart-grid-line,
+.app-shell.dark .mini-chart-baseline {
+  stroke: #253142;
+}
+
+.app-shell.dark .status-pill.connected {
+  background: #163624;
+  color: #7ee0a1;
+}
+
+.app-shell.dark .status-pill.warning,
+.app-shell.dark .warning-badge {
+  background: #3c2f14;
+  color: #f5c66d;
+}
+
+.app-shell.dark .positive {
+  color: #7ee0a1;
+}
+
+.app-shell.dark .negative {
+  color: #f28b82;
+}
+
+.app-shell.dark .type-pill,
+.app-shell.dark .asset-dot {
+  border-color: #303b4a;
+}
+
+.app-shell.dark .donut {
+  box-shadow: inset 0 0 0 12px #151d27;
+}
+
+
+/* Dark mode final polish */
+.app-shell.dark .form-success,
+.app-shell.dark .form-error,
+.app-shell.dark .error-text,
+.app-shell.dark .technical-note,
+.app-shell.dark .csv-help,
+.app-shell.dark .csv-preview,
+.app-shell.dark .csv-dropzone,
+.app-shell.dark .import-preview,
+.app-shell.dark .placeholder-card,
+.app-shell.dark .audit-help-card,
+.app-shell.dark .audit-explanation-card,
+.app-shell.dark .journal-help-card,
+.app-shell.dark .audit-note,
+.app-shell.dark .info-box,
+.app-shell.dark .empty-state {
+  background: #111820;
+  border-color: #253142;
+  color: #a8b3c1;
+}
+
+.app-shell.dark .form-success strong,
+.app-shell.dark .form-error strong,
+.app-shell.dark .technical-note strong,
+.app-shell.dark .csv-help strong,
+.app-shell.dark .csv-preview strong,
+.app-shell.dark .csv-dropzone strong,
+.app-shell.dark .import-preview strong,
+.app-shell.dark .placeholder-card strong,
+.app-shell.dark .audit-help-card strong,
+.app-shell.dark .audit-explanation-card strong,
+.app-shell.dark .journal-help-card strong,
+.app-shell.dark .audit-note strong,
+.app-shell.dark .info-box strong,
+.app-shell.dark .empty-state strong {
+  color: #f3f4f6;
+}
+
+.app-shell.dark .form-success p,
+.app-shell.dark .form-error p,
+.app-shell.dark .technical-note p,
+.app-shell.dark .csv-help p,
+.app-shell.dark .csv-preview p,
+.app-shell.dark .csv-dropzone p,
+.app-shell.dark .import-preview p,
+.app-shell.dark .placeholder-card p,
+.app-shell.dark .audit-help-card p,
+.app-shell.dark .audit-explanation-card p,
+.app-shell.dark .journal-help-card p,
+.app-shell.dark .audit-note p,
+.app-shell.dark .info-box p,
+.app-shell.dark .empty-state p {
+  color: #a8b3c1;
+}
+
+.app-shell.dark .transactions-table button,
+.app-shell.dark .primary-action,
+.app-shell.dark .secondary-action,
+.app-shell.dark .select-button {
+  color: #f3f4f6;
+  background: #202a36;
+  border-color: #303b4a;
+}
+
+.app-shell.dark .transactions-table button:hover,
+.app-shell.dark .primary-action:hover,
+.app-shell.dark .secondary-action:hover,
+.app-shell.dark .select-button:hover {
+  background: #2a3645;
+}
+
+.app-shell.dark .primary-action {
+  background: #24324a;
+}
+
+.app-shell.dark .secondary-action {
+  background: #172231;
+}
+
+.app-shell.dark .type-pill.buy,
+.app-shell.dark .type-pill.sell,
+.app-shell.dark .type-pill.deposit,
+.app-shell.dark .type-pill.withdrawal,
+.app-shell.dark .type-pill.transfer,
+.app-shell.dark .type-pill.dividend,
+.app-shell.dark .type-pill.fee,
+.app-shell.dark .type-pill.opening_position,
+.app-shell.dark .type-pill.opening_cash {
+  color: #f3f4f6;
+  background: #202a36;
+  border-color: #303b4a;
+}
+
+.app-shell.dark .type-pill.buy {
+  background: #1c2d47;
+}
+
+.app-shell.dark .type-pill.sell,
+.app-shell.dark .type-pill.withdrawal,
+.app-shell.dark .type-pill.fee {
+  background: #3a2023;
+}
+
+.app-shell.dark .type-pill.deposit,
+.app-shell.dark .type-pill.dividend {
+  background: #163624;
+}
+
+.app-shell.dark .type-pill.transfer {
+  background: #2b2442;
+}
+
+.app-shell.dark .csv-status.valid,
+.app-shell.dark .status-pill.connected {
+  background: #163624;
+  color: #7ee0a1;
+}
+
+.app-shell.dark .csv-status.error,
+.app-shell.dark .status-pill.warning,
+.app-shell.dark .warning-badge {
+  background: #3c2f14;
+  color: #f5c66d;
+}
+
+.app-shell.dark .recommendation-action.high {
+  background: #13251c;
+  border-color: #245337;
+}
+
+.app-shell.dark .recommendation-action.medium {
+  background: #151f33;
+  border-color: #263b60;
+}
+
+.app-shell.dark .recommendation-action.low {
+  background: #111820;
+  border-color: #253142;
+}
+
+.app-shell.dark .recommendation-action-rank {
+  color: #f3f4f6;
+  background: #202a36;
+}
+
+.app-shell.dark .recommendation-action.high .recommendation-action-rank {
+  color: #7ee0a1;
+  background: #163624;
+}
+
+.app-shell.dark .recommendation-action-title span {
+  color: #cbd5e1;
+  background: #202a36;
+}
+
+.app-shell.dark .recommendation-avoid.warning {
+  background: #2e2615;
+  border-color: #4c3b18;
+}
+
+.app-shell.dark .recommendation-avoid.info {
+  background: #151f33;
+  border-color: #263b60;
+}
+
+.app-shell.dark .forecast-toggle-control span,
+.app-shell.dark .recommendation-input,
+.app-shell.dark .forecast-input-grid label {
+  color: #a8b3c1;
+}
+
+.app-shell.dark .forecast-table th,
+.app-shell.dark .forecast-table td,
+.app-shell.dark .performance-breakdown-table th,
+.app-shell.dark .performance-breakdown-table td,
+.app-shell.dark .allocation-table th,
+.app-shell.dark .allocation-table td {
+  border-color: #253142;
+}
+
+.app-shell.dark .forecast-table .amount-cell,
+.app-shell.dark .performance-breakdown-table td:first-child,
+.app-shell.dark .allocation-table .amount-cell {
+  color: #f3f4f6;
+}
+
+.app-shell.dark .target-bar,
+.app-shell.dark .goal-progress-track,
+.app-shell.dark .stacked-bar {
+  background: #202a36;
+}
+
+.app-shell.dark .donut {
+  box-shadow: inset 0 0 0 12px #151d27;
+}
+
+.app-shell.dark .price-error-cell {
+  color: #f28b82;
+}
+
+.app-shell.dark .amount-cell {
+  color: #f3f4f6;
+  font-weight: 800;
+}
+
+/* Dernier filet de sécurité pour les encarts blancs restants dans les cartes */
+.app-shell.dark .card div[style*="background: white"],
+.app-shell.dark .card div[style*="background:#fff"],
+.app-shell.dark .card div[style*="background: #fff"] {
+  background: #111820 !important;
+  border-color: #253142 !important;
+  color: #a8b3c1 !important;
+}
+
+
+/* Dark mode targeted fixes */
+.app-shell.dark {
+  --dark-bg: #0f141b;
+  --dark-panel: #151d27;
+  --dark-panel-soft: #111820;
+  --dark-border: #253142;
+  --dark-text: #f3f4f6;
+  --dark-muted: #a8b3c1;
+}
+
+/* Icônes / boutons du haut */
+.app-shell.dark button {
+  color: #f3f4f6;
+}
+
+.app-shell.dark .topbar button,
+.app-shell.dark .theme-toggle,
+.app-shell.dark .privacy-toggle,
+.app-shell.dark .icon-button {
+  color: #e5edf7 !important;
+  opacity: 1 !important;
+}
+
+.app-shell.dark .topbar button:hover,
+.app-shell.dark .theme-toggle:hover,
+.app-shell.dark .privacy-toggle:hover,
+.app-shell.dark .icon-button:hover {
+  background: #202a36;
+  color: #ffffff !important;
+}
+
+.app-shell.dark .avatar,
+.app-shell.dark .profile-avatar,
+.app-shell.dark .user-avatar {
+  background: #202a36 !important;
+  color: #f3f4f6 !important;
+  border-color: #303b4a !important;
+}
+
+/* Donuts : garder le conic-gradient, changer seulement le centre */
+.app-shell.dark .donut {
+  box-shadow: inset 0 0 0 28px #151d27 !important;
+}
+
+.app-shell.dark .donut::before,
+.app-shell.dark .donut::after {
+  background: #151d27 !important;
+  border-color: #151d27 !important;
+}
+
+/* Encarts de type objectif / aide / note */
+.app-shell.dark [class*="target"],
+.app-shell.dark [class*="objective"],
+.app-shell.dark [class*="help"],
+.app-shell.dark [class*="note"],
+.app-shell.dark [class*="quick"],
+.app-shell.dark [class*="audit"],
+.app-shell.dark [class*="explanation"] {
+  border-color: #253142;
+}
+
+.app-shell.dark .target-box,
+.app-shell.dark .target-card,
+.app-shell.dark .target-summary,
+.app-shell.dark .target-note,
+.app-shell.dark .target-allocation,
+.app-shell.dark .allocation-target,
+.app-shell.dark .allocation-target-box,
+.app-shell.dark .objective-box,
+.app-shell.dark .objective-card,
+.app-shell.dark .audit-note,
+.app-shell.dark .audit-help,
+.app-shell.dark .audit-help-card,
+.app-shell.dark .audit-explanation,
+.app-shell.dark .audit-explanation-card,
+.app-shell.dark .journal-help,
+.app-shell.dark .journal-help-card,
+.app-shell.dark .quick-read,
+.app-shell.dark .quick-read-card,
+.app-shell.dark .technical-note,
+.app-shell.dark .info-box,
+.app-shell.dark .help-box {
+  background: #111820 !important;
+  border-color: #253142 !important;
+  color: #a8b3c1 !important;
+}
+
+.app-shell.dark .target-box *,
+.app-shell.dark .target-card *,
+.app-shell.dark .target-summary *,
+.app-shell.dark .target-note *,
+.app-shell.dark .target-allocation *,
+.app-shell.dark .allocation-target *,
+.app-shell.dark .allocation-target-box *,
+.app-shell.dark .objective-box *,
+.app-shell.dark .objective-card *,
+.app-shell.dark .audit-note *,
+.app-shell.dark .audit-help *,
+.app-shell.dark .audit-help-card *,
+.app-shell.dark .audit-explanation *,
+.app-shell.dark .audit-explanation-card *,
+.app-shell.dark .journal-help *,
+.app-shell.dark .journal-help-card *,
+.app-shell.dark .quick-read *,
+.app-shell.dark .quick-read-card *,
+.app-shell.dark .technical-note *,
+.app-shell.dark .info-box *,
+.app-shell.dark .help-box * {
+  color: #a8b3c1 !important;
+}
+
+.app-shell.dark .target-box strong,
+.app-shell.dark .target-card strong,
+.app-shell.dark .target-summary strong,
+.app-shell.dark .target-note strong,
+.app-shell.dark .target-allocation strong,
+.app-shell.dark .allocation-target strong,
+.app-shell.dark .allocation-target-box strong,
+.app-shell.dark .objective-box strong,
+.app-shell.dark .objective-card strong,
+.app-shell.dark .audit-note strong,
+.app-shell.dark .audit-help strong,
+.app-shell.dark .audit-help-card strong,
+.app-shell.dark .audit-explanation strong,
+.app-shell.dark .audit-explanation-card strong,
+.app-shell.dark .journal-help strong,
+.app-shell.dark .journal-help-card strong,
+.app-shell.dark .quick-read strong,
+.app-shell.dark .quick-read-card strong,
+.app-shell.dark .technical-note strong,
+.app-shell.dark .info-box strong,
+.app-shell.dark .help-box strong {
+  color: #f3f4f6 !important;
+}
+
+/* Filet de sécurité : corrige les blocs inline blancs, mais exclut les donuts */
+.app-shell.dark .card :not(.donut)[style*="background: white"],
+.app-shell.dark .card :not(.donut)[style*="background:white"],
+.app-shell.dark .card :not(.donut)[style*="background: #fff"],
+.app-shell.dark .card :not(.donut)[style*="background:#fff"],
+.app-shell.dark .card :not(.donut)[style*="background-color: white"],
+.app-shell.dark .card :not(.donut)[style*="background-color:white"],
+.app-shell.dark .card :not(.donut)[style*="background-color: #fff"],
+.app-shell.dark .card :not(.donut)[style*="background-color:#fff"] {
+  background: #111820 !important;
+  border-color: #253142 !important;
+  color: #a8b3c1 !important;
+}
+
+/* Boutons clairs restants */
+.app-shell.dark .secondary-action,
+.app-shell.dark .ghost-action,
+.app-shell.dark .select-button,
+.app-shell.dark .view-all-button,
+.app-shell.dark .card a.button,
+.app-shell.dark .card button[class] {
+  background: #202a36;
+  border-color: #303b4a;
+  color: #f3f4f6;
+}
+
+.app-shell.dark .secondary-action:hover,
+.app-shell.dark .ghost-action:hover,
+.app-shell.dark .select-button:hover,
+.app-shell.dark .view-all-button:hover,
+.app-shell.dark .card a.button:hover,
+.app-shell.dark .card button[class]:hover {
+  background: #2a3645;
+}
+
+/* Tables / badges */
+.app-shell.dark th,
+.app-shell.dark td {
+  border-color: #253142 !important;
+}
+
+.app-shell.dark th {
+  color: #8f9aaa !important;
+}
+
+.app-shell.dark td {
+  color: #a8b3c1;
+}
+
+.app-shell.dark td:first-child,
+.app-shell.dark .amount-cell {
+  color: #f3f4f6;
+}
+
+.app-shell.dark .status-pill.connected,
+.app-shell.dark .csv-status.valid {
+  background: #163624 !important;
+  color: #7ee0a1 !important;
+}
+
+.app-shell.dark .status-pill.warning,
+.app-shell.dark .csv-status.error,
+.app-shell.dark .warning-badge {
+  background: #3c2f14 !important;
+  color: #f5c66d !important;
+}
+
+
+/* Dark mode precise donut and target fixes */
+
+/* Ne pas écraser le conic-gradient des donuts : on change seulement le centre */
+.app-shell.dark .donut {
+  box-shadow: none !important;
+}
+
+.app-shell.dark .donut::after {
+  content: "" !important;
+  position: absolute !important;
+  inset: 28px !important;
+  border-radius: 999px !important;
+  background: #151d27 !important;
+}
+
+/* Donuts larges de la page Répartition */
+.app-shell.dark .allocation-large-donut {
+  position: relative !important;
+  box-shadow: none !important;
+}
+
+.app-shell.dark .allocation-large-donut::after {
+  content: "" !important;
+  position: absolute !important;
+  inset: 34% !important;
+  border-radius: 999px !important;
+  background: #151d27 !important;
+}
+
+/* Encarts objectif cible */
+.app-shell.dark .allocation-target-note {
+  background: #111820 !important;
+  border-color: #253142 !important;
+}
+
+.app-shell.dark .allocation-target-note span {
+  color: #8f9aaa !important;
+}
+
+.app-shell.dark .allocation-target-note strong {
+  color: #cbd5e1 !important;
+}
+
+/* Bouton clair sélectionné dans le graphique */
+.app-shell.dark .tabs strong {
+  color: #dbeafe !important;
+  background: #24324a !important;
+}
+
+/* Bouton voir toutes les positions / boutons clairs restants */
+.app-shell.dark .table-action button,
+.app-shell.dark .select-button,
+.app-shell.dark .secondary-action {
+  color: #f3f4f6 !important;
+  background: #202a36 !important;
+  border-color: #303b4a !important;
+}
+
+/* Sécurité : si un vieux bloc dark avait forcé les couleurs des gradients */
+.app-shell.dark .donut[style],
+.app-shell.dark .allocation-large-donut[style] {
+  color: inherit !important;
+}
