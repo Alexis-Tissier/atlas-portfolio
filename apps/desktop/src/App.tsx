@@ -90,6 +90,90 @@ type AccountClassDistribution = {
   rows: DistributionRow[];
 };
 
+type RecommendationAction = {
+  assetClass: string;
+  amount: number;
+  percent: number;
+  title: string;
+  instrumentHint: string;
+  reason: string;
+  priority: "high" | "medium" | "low";
+};
+
+type RecommendationAvoidance = {
+  label: string;
+  reason: string;
+  severity: "warning" | "info";
+};
+
+type RecommendationPlan = {
+  actions: RecommendationAction[];
+  avoidances: RecommendationAvoidance[];
+  mainMessage: string;
+  targetGapMessage: string;
+  concentrationMessage: string;
+};
+
+type GoalMilestone = {
+  amount: number;
+  title: string;
+  subtitle: string;
+  description: string;
+  rules: string[];
+};
+
+const goalMilestones: GoalMilestone[] = [
+  {
+    amount: 1_000,
+    title: "Base minimale",
+    subtitle: "Démarrage propre",
+    description: "Éviter la dispersion et construire une première structure lisible.",
+    rules: ["Limiter le nombre de lignes.", "Prioriser la régularité des apports.", "Éviter les positions trop petites."],
+  },
+  {
+    amount: 5_000,
+    title: "Construction",
+    subtitle: "Socle patrimonial",
+    description: "Construire un portefeuille simple, diversifié et facile à suivre.",
+    rules: ["Renforcer les ETF ou les lignes centrales.", "Garder une poche de cash claire.", "Éviter les achats impulsifs."],
+  },
+  {
+    amount: 10_000,
+    title: "Accélération",
+    subtitle: "Allocation cible",
+    description: "Commencer à piloter l'écart entre l'allocation réelle et l'allocation idéale.",
+    rules: ["Rééquilibrer surtout par les nouveaux apports.", "Surveiller les grosses lignes.", "Clarifier le rôle de chaque actif."],
+  },
+  {
+    amount: 25_000,
+    title: "Pilotage régulier",
+    subtitle: "Suivi structuré",
+    description: "Suivre les performances, la concentration et les écarts d'allocation.",
+    rules: ["Analyser la performance hors apports.", "Limiter la concentration par ligne.", "Contrôler les classes d'actifs chaque mois."],
+  },
+  {
+    amount: 50_000,
+    title: "Diversification avancée",
+    subtitle: "Robustesse",
+    description: "Diversifier plus finement les zones, secteurs et enveloppes.",
+    rules: ["Éviter une dépendance excessive à un secteur.", "Comparer PEA, CTO, cash et crypto.", "Préparer une stratégie long terme plus robuste."],
+  },
+  {
+    amount: 75_000,
+    title: "Stabilisation",
+    subtitle: "Maîtrise du risque",
+    description: "Réduire les angles morts et rendre la stratégie plus défensive si nécessaire.",
+    rules: ["Surveiller la volatilité globale.", "Renforcer la liquidité disponible.", "Formaliser des règles de vente ou d'arbitrage."],
+  },
+  {
+    amount: 100_000,
+    title: "Optimisation",
+    subtitle: "Patrimoine confirmé",
+    description: "Optimiser fiscalité, liquidité, diversification et lisibilité globale.",
+    rules: ["Penser fiscalité et enveloppes.", "Évaluer l'immobilier ou d'autres poches.", "Conserver une stratégie simple malgré la taille du portefeuille."],
+  },
+];
+
 
 function App() {
   const [currentPage, setCurrentPage] = useState("Portefeuille");
@@ -286,6 +370,11 @@ function App() {
             positions={positionsPageRows}
             summary={summary}
           />
+        ) : currentPage === "Objectifs" ? (
+          <GoalsPage
+            isPrivacyMode={isPrivacyMode}
+            summary={summary}
+          />
         ) : currentPage === "Performance" ? (
           <PerformancePage
             isPrivacyMode={isPrivacyMode}
@@ -304,6 +393,14 @@ function App() {
             securities={securities}
             transactions={transactions}
             transactionsError={transactionsError}
+          />
+        ) : currentPage === "Recommandations" ? (
+          <RecommendationsPage
+            accounts={accounts}
+            allocationRows={allocationRows}
+            isPrivacyMode={isPrivacyMode}
+            positions={positionsPageRows}
+            summary={summary}
           />
         ) : currentPage === "Journal" ? (
           <PortfolioAuditPage
@@ -725,6 +822,368 @@ function PerformanceMiniChart({
   );
 }
 
+
+
+
+function GoalsPage({
+  isPrivacyMode,
+  summary,
+}: {
+  isPrivacyMode: boolean;
+  summary: { total: number; performance_amount: number; performance_percent: number; start_date: string };
+}) {
+  const totalValue = Math.max(summary.total, 0);
+  const reachedMilestones = goalMilestones.filter((milestone) => totalValue >= milestone.amount);
+  const currentMilestone = reachedMilestones[reachedMilestones.length - 1] ?? null;
+  const nextMilestone = goalMilestones.find((milestone) => totalValue < milestone.amount) ?? null;
+  const displayedMilestone = currentMilestone ?? nextMilestone ?? goalMilestones[0];
+  const baselineAmount = currentMilestone?.amount ?? 0;
+  const targetAmount = nextMilestone?.amount ?? Math.max(totalValue, 1);
+  const progressPercent = nextMilestone
+    ? Math.min(Math.max(((totalValue - baselineAmount) / Math.max(targetAmount - baselineAmount, 1)) * 100, 0), 100)
+    : 100;
+  const remainingAmount = nextMilestone ? Math.max(nextMilestone.amount - totalValue, 0) : 0;
+
+  return (
+    <section className="page">
+      <div className="title-block">
+        <h1>Objectifs</h1>
+        <p>Suivi des paliers patrimoniaux, du prochain cap à atteindre et des règles associées.</p>
+      </div>
+
+      <div className="transaction-summary-grid goals-summary-grid">
+        <MetricCard label="Patrimoine actuel" value={displayEuro(totalValue, isPrivacyMode)} note="base de suivi" />
+        <MetricCard label="Palier actuel" value={currentMilestone?.title ?? "Préparation"} note={currentMilestone ? displayEuro(currentMilestone.amount, isPrivacyMode) : "premier palier à atteindre"} />
+        <MetricCard label="Prochain palier" value={nextMilestone ? displayEuro(nextMilestone.amount, isPrivacyMode) : "Tous atteints"} note={nextMilestone?.title ?? "objectif haut validé"} />
+        <MetricCard label="Reste à atteindre" value={nextMilestone ? displayEuro(remainingAmount, isPrivacyMode) : "—"} note={formatUnsignedPercent(progressPercent)} />
+      </div>
+
+      <div className="goals-layout">
+        <article className="card goals-progress-card">
+          <div className="card-header">
+            <h2>Progression vers le prochain palier</h2>
+            <span className="status-pill connected">{formatUnsignedPercent(progressPercent)}</span>
+          </div>
+
+          <div className="goal-progress-main">
+            <div>
+              <strong>{nextMilestone ? nextMilestone.title : "Objectif haut atteint"}</strong>
+              <p>{nextMilestone ? nextMilestone.description : "Tous les paliers définis sont atteints."}</p>
+            </div>
+            <span>{nextMilestone ? displayEuro(remainingAmount, isPrivacyMode) : "—"}</span>
+          </div>
+
+          <div className="goal-progress-track">
+            <span style={{ width: `${progressPercent}%` }} />
+          </div>
+
+          <div className="goal-progress-footer">
+            <span>{displayEuro(baselineAmount, isPrivacyMode)}</span>
+            <span>{nextMilestone ? displayEuro(nextMilestone.amount, isPrivacyMode) : displayEuro(totalValue, isPrivacyMode)}</span>
+          </div>
+        </article>
+
+        <article className="card goals-guidance-card">
+          <h2>Règle du moment</h2>
+          <p className="muted">{displayedMilestone.subtitle}</p>
+          <h3>{displayedMilestone.title}</h3>
+          <p>{displayedMilestone.description}</p>
+
+          <ul className="goal-rule-list">
+            {displayedMilestone.rules.map((rule) => (
+              <li key={rule}>{rule}</li>
+            ))}
+          </ul>
+        </article>
+
+        <article className="card goals-milestones-card">
+          <h2>Parcours patrimonial</h2>
+          <p className="muted">Chaque palier donne une logique de pilotage différente.</p>
+
+          <div className="goal-milestone-list">
+            {goalMilestones.map((milestone) => {
+              const isDone = totalValue >= milestone.amount;
+              const isActive = nextMilestone?.amount === milestone.amount;
+              const statusClass = isDone ? "done" : isActive ? "active" : "locked";
+              const statusLabel = isDone ? "Atteint" : isActive ? "En cours" : "À venir";
+
+              return (
+                <div className={`goal-milestone-row ${statusClass}`} key={milestone.amount}>
+                  <div className="goal-milestone-marker">
+                    <span>{isDone ? "✓" : isActive ? "→" : "○"}</span>
+                  </div>
+
+                  <div>
+                    <strong>{milestone.title}</strong>
+                    <p>{milestone.description}</p>
+                  </div>
+
+                  <div className="goal-milestone-meta">
+                    <strong>{displayEuro(milestone.amount, isPrivacyMode)}</strong>
+                    <span>{statusLabel}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </article>
+      </div>
+    </section>
+  );
+}
+
+
+
+function RecommendationsPage({
+  accounts,
+  allocationRows,
+  isPrivacyMode,
+  positions,
+  summary,
+}: {
+  accounts: DashboardData["accounts"];
+  allocationRows: AllocationDisplayRow[];
+  isPrivacyMode: boolean;
+  positions: PositionPageRow[];
+  summary: { total: number; performance_amount: number; performance_percent: number; start_date: string };
+}) {
+  const [contributionInput, setContributionInput] = useState(String(monthlyContribution.amount));
+  const contributionAmount = Math.max(parseDecimal(contributionInput) || 0, 0);
+  const plan = buildRecommendationPlan(allocationRows, positions, accounts, summary.total, contributionAmount);
+  const topAction = plan.actions[0] ?? null;
+  const totalRecommended = plan.actions.reduce((sum, action) => sum + action.amount, 0);
+
+  return (
+    <section className="page">
+      <div className="title-block page-title-row">
+        <div>
+          <h1>Recommandations</h1>
+          <p>Plan d’action concret basé sur les écarts d’allocation, la concentration et le prochain apport.</p>
+        </div>
+
+        <label className="recommendation-input">
+          Prochain apport
+          <input
+            inputMode="decimal"
+            onChange={(event) => setContributionInput(event.target.value)}
+            value={contributionInput}
+          />
+        </label>
+      </div>
+
+      <div className="transaction-summary-grid recommendations-summary-grid">
+        <MetricCard label="À investir" value={displayEuro(contributionAmount, isPrivacyMode)} note="montant simulé" />
+        <MetricCard label="Priorité" value={topAction?.assetClass ?? "—"} note={topAction?.title ?? "aucune action"} />
+        <MetricCard label="Montant conseillé" value={displayEuro(totalRecommended, isPrivacyMode)} note="selon écarts cible" />
+        <MetricCard label="À éviter" value={String(plan.avoidances.length)} note="renforcements déconseillés" />
+      </div>
+
+      <div className="recommendations-layout">
+        <article className="card recommendation-main-card">
+          <div className="card-header">
+            <h2>Plan d’action du mois</h2>
+            <span className="status-pill connected">Rééquilibrage</span>
+          </div>
+
+          <p className="recommendation-main-message">{plan.mainMessage}</p>
+
+          <div className="recommendation-action-list">
+            {plan.actions.length > 0 ? (
+              plan.actions.map((action, index) => (
+                <div className={`recommendation-action ${action.priority}`} key={`${action.assetClass}-${index}`}>
+                  <div className="recommendation-action-rank">{index + 1}</div>
+
+                  <div>
+                    <div className="recommendation-action-title">
+                      <strong>{action.title}</strong>
+                      <span>{action.assetClass}</span>
+                    </div>
+                    <p>{action.instrumentHint}</p>
+                    <small>{action.reason}</small>
+                  </div>
+
+                  <div className="recommendation-action-amount">
+                    <strong>{displayEuro(action.amount, isPrivacyMode)}</strong>
+                    <span>{formatUnsignedPercent(action.percent)}</span>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="muted">Aucune action d’achat proposée avec ce montant.</p>
+            )}
+          </div>
+        </article>
+
+        <article className="card recommendation-diagnostic-card">
+          <h2>Diagnostic</h2>
+
+          <div className="recommendation-diagnostic-list">
+            <div>
+              <strong>Écart cible</strong>
+              <p>{plan.targetGapMessage}</p>
+            </div>
+
+            <div>
+              <strong>Concentration</strong>
+              <p>{plan.concentrationMessage}</p>
+            </div>
+
+            <div>
+              <strong>Principe</strong>
+              <p>Les recommandations privilégient les nouveaux apports. L’objectif est de corriger sans vendre dans l’urgence.</p>
+            </div>
+          </div>
+        </article>
+
+        <article className="card recommendation-avoid-card">
+          <h2>À ne pas renforcer maintenant</h2>
+          <p className="muted">Ces lignes ou poches sont déjà trop lourdes ou moins prioritaires.</p>
+
+          <div className="recommendation-avoid-list">
+            {plan.avoidances.length > 0 ? (
+              plan.avoidances.map((item) => (
+                <div className={`recommendation-avoid ${item.severity}`} key={item.label}>
+                  <strong>{item.label}</strong>
+                  <p>{item.reason}</p>
+                </div>
+              ))
+            ) : (
+              <p className="muted">Aucune interdiction forte détectée. Le portefeuille semble proche de sa cible.</p>
+            )}
+          </div>
+        </article>
+      </div>
+    </section>
+  );
+}
+
+function buildRecommendationPlan(
+  allocationRows: AllocationDisplayRow[],
+  positions: PositionPageRow[],
+  accounts: DashboardData["accounts"],
+  totalValue: number,
+  contributionAmount: number,
+): RecommendationPlan {
+  const normalizedRows = allocationRows.map((row) => ({
+    bucket: row.bucket,
+    targetPercent: row.targetPercent,
+    actualPercent: row.actualPercent ?? 0,
+    differencePercent: row.differencePercent ?? 0,
+    value: row.value ?? 0,
+  }));
+
+  const underweighted = normalizedRows
+    .map((row) => ({
+      ...row,
+      missingPercent: row.targetPercent - row.actualPercent,
+    }))
+    .filter((row) => row.missingPercent > 0.5)
+    .sort((left, right) => right.missingPercent - left.missingPercent);
+
+  const overweighted = normalizedRows
+    .filter((row) => row.actualPercent - row.targetPercent > 1.5)
+    .sort((left, right) => (right.actualPercent - right.targetPercent) - (left.actualPercent - left.targetPercent));
+
+  const totalMissing = underweighted.reduce((sum, row) => sum + row.missingPercent, 0);
+  const hasPea = accounts.some((account) => account.account_type === "pea");
+  const actions = contributionAmount > 0 && totalMissing > 0
+    ? underweighted
+        .map((row, index) => {
+          const rawAmount = contributionAmount * (row.missingPercent / totalMissing);
+          const amount = Math.round(rawAmount / 10) * 10;
+
+          return {
+            assetClass: row.bucket,
+            amount,
+            percent: contributionAmount > 0 ? (amount / contributionAmount) * 100 : 0,
+            title: titleForRecommendation(row.bucket),
+            instrumentHint: instrumentHintForRecommendation(row.bucket, hasPea),
+            reason: `${row.bucket} est sous la cible de ${formatUnsignedPercent(row.missingPercent)} : actuel ${formatUnsignedPercent(row.actualPercent)}, cible ${formatUnsignedPercent(row.targetPercent)}.`,
+            priority: index === 0 ? "high" : index === 1 ? "medium" : "low",
+          } satisfies RecommendationAction;
+        })
+        .filter((action) => action.amount > 0)
+    : [];
+
+  const avoidances: RecommendationAvoidance[] = [];
+
+  for (const row of overweighted) {
+    avoidances.push({
+      label: `Poche ${row.bucket}`,
+      reason: `${row.bucket} est déjà au-dessus de la cible : actuel ${formatUnsignedPercent(row.actualPercent)}, cible ${formatUnsignedPercent(row.targetPercent)}. Priorité aux autres poches.`,
+      severity: "warning",
+    });
+  }
+
+  const concentratedPositions = [...positions]
+    .map((position) => ({
+      ...position,
+      weight: totalValue > 0 ? (position.value / totalValue) * 100 : 0,
+    }))
+    .filter((position) => position.weight >= 12)
+    .sort((left, right) => right.weight - left.weight)
+    .slice(0, 4);
+
+  for (const position of concentratedPositions) {
+    avoidances.push({
+      label: position.security_name,
+      reason: `Cette ligne pèse ${formatUnsignedPercent(position.weight)} du portefeuille. Évite de la renforcer tant qu’elle reste aussi dominante.`,
+      severity: "warning",
+    });
+  }
+
+  if (actions.some((action) => action.assetClass === "ETF")) {
+    avoidances.push({
+      label: "Actions individuelles non prioritaires",
+      reason: "Les ETF sont sous la cible : les nouveaux apports doivent d’abord améliorer la diversification globale.",
+      severity: "info",
+    });
+  }
+
+  const mainMessage = actions.length > 0
+    ? `Avec ${formatEuro(contributionAmount)}, la priorité est de corriger les poches sous-pondérées plutôt que de renforcer les lignes déjà visibles.`
+    : "Le portefeuille est proche de son allocation cible ou le montant d’apport est nul. Aucun achat prioritaire n’est proposé.";
+
+  const targetGapMessage = underweighted.length > 0
+    ? `Poche la plus en retard : ${underweighted[0].bucket}, avec ${formatUnsignedPercent(underweighted[0].missingPercent)} sous la cible.`
+    : "Aucune poche n’est fortement sous-pondérée par rapport à la cible.";
+
+  const concentrationMessage = concentratedPositions.length > 0
+    ? `Ligne la plus concentrée : ${concentratedPositions[0].security_name}, à ${formatUnsignedPercent(concentratedPositions[0].weight)} du portefeuille.`
+    : "Aucune ligne ne dépasse le seuil de concentration de 12 %.";
+
+  return {
+    actions,
+    avoidances,
+    mainMessage,
+    targetGapMessage,
+    concentrationMessage,
+  };
+}
+
+function titleForRecommendation(assetClass: string) {
+  const titles: Record<string, string> = {
+    ETF: "Acheter en priorité",
+    Actions: "Renforcer sélectivement",
+    Crypto: "Renforcer prudemment",
+    Cash: "Garder en liquidité",
+  };
+
+  return titles[assetClass] ?? "Renforcer";
+}
+
+function instrumentHintForRecommendation(assetClass: string, hasPea: boolean) {
+  const peaText = hasPea ? " via le PEA" : "";
+
+  const hints: Record<string, string> = {
+    ETF: `ETF Monde ou ETF S&P 500${peaText}. L’objectif est d’augmenter la diversification internationale.`,
+    Actions: "Actions de qualité, mais seulement hors lignes déjà trop lourdes. Évite de renforcer une concentration existante.",
+    Crypto: "BTC / ETH uniquement si la poche crypto reste sous la cible et si tu acceptes la volatilité.",
+    Cash: "Cash disponible, Livret A ou poche de sécurité. À privilégier si la liquidité est trop basse.",
+  };
+
+  return hints[assetClass] ?? "Renforcement selon la poche sous-pondérée.";
+}
 
 
 function AllocationPage({
