@@ -261,7 +261,15 @@ function App() {
           </div>
         </header>
 
-        {currentPage === "Positions" ? (
+        {currentPage === "Performance" ? (
+          <PerformancePage
+            allocationRows={allocationRows}
+            isPrivacyMode={isPrivacyMode}
+            positions={positionsPageRows}
+            snapshots={chartSnapshots}
+            summary={summary}
+          />
+        ) : currentPage === "Positions" ? (
           <PositionsPage positions={positionsPageRows} positionsError={positionsError} priceUpdateSummary={priceUpdateSummary} isPrivacyMode={isPrivacyMode} />
         ) : currentPage === "Transactions" ? (
           <TransactionsPage
@@ -530,6 +538,153 @@ function DashboardPage({
 
 
 
+
+function PerformancePage({
+  allocationRows,
+  isPrivacyMode,
+  positions,
+  snapshots,
+  summary,
+}: {
+  allocationRows: AllocationDisplayRow[];
+  isPrivacyMode: boolean;
+  positions: PositionPageRow[];
+  snapshots: DashboardData["snapshots"];
+  summary: { total: number; performance_amount: number; performance_percent: number; start_date: string };
+}) {
+  const positionsValue = positions.reduce((sum, position) => sum + position.value, 0);
+  const investedCapital = positions.reduce((sum, position) => sum + position.cost, 0);
+  const latentPerformance = positions.reduce((sum, position) => sum + position.performance_amount, 0);
+  const latentPerformancePercent = investedCapital > 0 ? (latentPerformance / investedCapital) * 100 : 0;
+  const cashValue = Math.max(summary.total - positionsValue, 0);
+  const sortedByValue = [...positions].sort((left, right) => right.value - left.value);
+  const topPosition = sortedByValue[0] ?? null;
+  const topPositionWeight = topPosition && summary.total > 0 ? (topPosition.value / summary.total) * 100 : 0;
+  const winners = [...positions].sort((left, right) => right.performance_amount - left.performance_amount).slice(0, 3);
+  const losers = [...positions].sort((left, right) => left.performance_amount - right.performance_amount).slice(0, 3);
+  const normalizedAllocationRows = allocationRows.map((row) => ({
+    ...row,
+    actualPercent: row.actualPercent ?? 0,
+    differencePercent: row.differencePercent ?? 0,
+    value: row.value ?? 0,
+  }));
+
+  return (
+    <section className="page">
+      <div className="title-block">
+        <h1>Performance</h1>
+        <p>Analyse des résultats, du capital investi, de la plus-value latente et des poids du portefeuille.</p>
+      </div>
+
+      <div className="transaction-summary-grid performance-summary-grid">
+        <MetricCard label="Capital investi" value={displayEuro(investedCapital, isPrivacyMode)} note="prix de revient positions" />
+        <MetricCard label="Valeur positions" value={displayEuro(positionsValue, isPrivacyMode)} note="hors cash" />
+        <MetricCard label="Plus-value latente" value={displayEuro(latentPerformance, isPrivacyMode)} note={formatSignedPercent(latentPerformancePercent)} />
+        <MetricCard label="Cash estimé" value={displayEuro(cashValue, isPrivacyMode)} note="total - positions" />
+        <MetricCard label="Concentration max." value={topPosition ? formatUnsignedPercent(topPositionWeight) : "—"} note={topPosition?.security_name ?? "aucune position"} />
+      </div>
+
+      <div className="performance-grid">
+        <article className="card performance-chart-card">
+          <div className="card-header">
+            <h2>Patrimoine dans le temps</h2>
+            <span className="status-pill connected">Depuis le début</span>
+          </div>
+
+          <PortfolioChart snapshots={snapshots} currentTotal={summary.total} isPrivacyMode={isPrivacyMode} />
+        </article>
+
+        <article className="card performance-card">
+          <h2>Performance par classe</h2>
+          <p className="muted">Comparaison entre la répartition actuelle et l’objectif cible.</p>
+
+          <div className="allocation-performance-list">
+            {normalizedAllocationRows.map((row) => (
+              <div className="allocation-performance-row" key={row.bucket}>
+                <div>
+                  <strong>{row.bucket}</strong>
+                  <span>{displayEuro(row.value, isPrivacyMode)}</span>
+                </div>
+
+                <div className="target-bar">
+                  <span style={{ width: `${Math.min(Math.max(row.actualPercent, 0), 100)}%` }} />
+                </div>
+
+                <p>{formatUnsignedPercent(row.actualPercent)}</p>
+                <small className={row.differencePercent >= 0 ? "positive" : "negative"}>
+                  {formatSignedPercent(row.differencePercent)}
+                </small>
+              </div>
+            ))}
+          </div>
+        </article>
+
+        <article className="card performance-card">
+          <h2>Top gagnants</h2>
+
+          <div className="ranking-list">
+            {winners.map((position) => (
+              <div className="ranking-line" key={position.position_id}>
+                <div>
+                  <strong>{position.security_name}</strong>
+                  <span>{position.account_name}</span>
+                </div>
+                <p className="positive">
+                  {displayEuro(position.performance_amount, isPrivacyMode)}
+                  <small>{formatSignedPercent(position.performance_percent)}</small>
+                </p>
+              </div>
+            ))}
+          </div>
+        </article>
+
+        <article className="card performance-card">
+          <h2>Top perdants</h2>
+
+          <div className="ranking-list">
+            {losers.map((position) => (
+              <div className="ranking-line" key={position.position_id}>
+                <div>
+                  <strong>{position.security_name}</strong>
+                  <span>{position.account_name}</span>
+                </div>
+                <p className={position.performance_amount >= 0 ? "positive" : "negative"}>
+                  {displayEuro(position.performance_amount, isPrivacyMode)}
+                  <small>{formatSignedPercent(position.performance_percent)}</small>
+                </p>
+              </div>
+            ))}
+          </div>
+        </article>
+
+        <article className="card performance-card performance-wide-card">
+          <h2>Poids des lignes</h2>
+          <p className="muted">Les lignes les plus lourdes doivent rester surveillées pour éviter une concentration invisible.</p>
+
+          <div className="position-weight-list">
+            {sortedByValue.map((position) => (
+              <div className="position-weight-row" key={position.position_id}>
+                <div>
+                  <strong>{position.security_name}</strong>
+                  <span>{position.asset_class} · {position.account_name}</span>
+                </div>
+
+                <div className="target-bar">
+                  <span style={{ width: `${Math.min(Math.max(summary.total > 0 ? (position.value / summary.total) * 100 : 0, 0), 100)}%` }} />
+                </div>
+
+                <p>{formatUnsignedPercent(summary.total > 0 ? (position.value / summary.total) * 100 : 0)}</p>
+                <small>{displayEuro(position.value, isPrivacyMode)}</small>
+              </div>
+            ))}
+          </div>
+        </article>
+      </div>
+    </section>
+  );
+}
+
+
 function PortfolioChart({
   currentTotal,
   isPrivacyMode,
@@ -714,6 +869,9 @@ function TransactionsPage({
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<DbTransaction | null>(null);
 
+  const visibleTransactions = transactions.filter((transaction) => transaction.transaction_type !== "opening_position");
+  const technicalTransactionCount = transactions.length - visibleTransactions.length;
+
   async function handleDeleteTransaction(transaction: DbTransaction) {
     const confirmed = window.confirm(`Supprimer la transaction du ${formatDate(transaction.date)} ?`);
 
@@ -735,23 +893,23 @@ function TransactionsPage({
     setIsFormOpen(true);
   }
 
-  const totalDeposits = transactions
+  const totalDeposits = visibleTransactions
     .filter((transaction) => transaction.transaction_type === "deposit")
     .reduce((sum, transaction) => sum + transaction.amount, 0);
 
-  const totalWithdrawals = transactions
+  const totalWithdrawals = visibleTransactions
     .filter((transaction) => transaction.transaction_type === "withdrawal")
     .reduce((sum, transaction) => sum + transaction.amount, 0);
 
-  const totalTransfers = transactions
+  const totalTransfers = visibleTransactions
     .filter((transaction) => transaction.transaction_type === "transfer")
     .reduce((sum, transaction) => sum + transaction.amount, 0);
 
-  const totalBuys = transactions
+  const totalBuys = visibleTransactions
     .filter((transaction) => transaction.transaction_type === "buy")
     .reduce((sum, transaction) => sum + transaction.amount, 0);
 
-  const totalSells = transactions
+  const totalSells = visibleTransactions
     .filter((transaction) => transaction.transaction_type === "sell")
     .reduce((sum, transaction) => sum + transaction.amount, 0);
 
@@ -787,7 +945,7 @@ function TransactionsPage({
       ) : null}
 
       <div className="transaction-summary-grid">
-        <MetricCard label="Transactions" value={String(transactions.length)} note="enregistrées localement" />
+        <MetricCard label="Transactions" value={String(visibleTransactions.length)} note="opérations visibles" />
         <MetricCard label="Dépôts" value={displayEuro(totalDeposits, isPrivacyMode)} note="apports entrants" />
         <MetricCard label="Retraits" value={displayEuro(totalWithdrawals, isPrivacyMode)} note="sorties enregistrées" />
         <MetricCard label="Achats" value={displayEuro(totalBuys, isPrivacyMode)} note="ordres exécutés" />
@@ -800,6 +958,11 @@ function TransactionsPage({
           <div>
             <h2>Journal des transactions</h2>
             <p>Journal local des opérations enregistrées.</p>
+            {technicalTransactionCount > 0 ? (
+              <p className="technical-note">
+                {technicalTransactionCount} ajustement(s) technique(s) masqué(s) par défaut.
+              </p>
+            ) : null}
           </div>
           <span className="status-pill connected">Journal</span>
         </div>
@@ -822,7 +985,7 @@ function TransactionsPage({
             </tr>
           </thead>
           <tbody>
-            {transactions.map((transaction) => (
+            {visibleTransactions.map((transaction) => (
               <tr key={transaction.id}>
                 <td>{formatDate(transaction.date)}</td>
                 <td><span className={`type-pill ${transaction.transaction_type}`}>{labelForTransactionType(transaction.transaction_type)}</span></td>
@@ -1493,14 +1656,18 @@ function PortfolioAuditPage({
           </div>
 
           <div className="audit-header-actions">
-            <button
-              className="secondary-action"
-              disabled={isCreatingOpeningAdjustments || warningCount === 0}
-              onClick={handleCreateOpeningAdjustments}
-              type="button"
-            >
-              {isCreatingOpeningAdjustments ? "Création..." : "Créer les ajustements d’ouverture"}
-            </button>
+            {warningCount > 0 ? (
+              <button
+                className="secondary-action"
+                disabled={isCreatingOpeningAdjustments}
+                onClick={handleCreateOpeningAdjustments}
+                type="button"
+              >
+                {isCreatingOpeningAdjustments ? "Création..." : "Créer les ajustements d’ouverture"}
+              </button>
+            ) : (
+              <span className="status-pill connected">Aucun ajustement nécessaire</span>
+            )}
 
             <span className={warningCount === 0 ? "status-pill connected" : "status-pill warning"}>
               {warningCount === 0 ? "Cohérent" : `${warningCount} alerte(s)`}
