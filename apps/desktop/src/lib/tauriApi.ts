@@ -117,6 +117,13 @@ export type OnlineAssetSearchResult = {
   match_score: number;
 };
 
+export type OnlineAssetQuote = {
+  symbol: string;
+  price: number;
+  source: string;
+  used_symbol: string;
+};
+
 export type NewOnlineSecurity = {
   symbol: string;
   name: string;
@@ -237,6 +244,10 @@ export async function createSecurity(input: NewSecurityInput) {
 
 export async function searchOnlineAssets(query: string) {
   return invoke<OnlineAssetSearchResult[]>("search_online_assets", { query });
+}
+
+export async function lookupOnlineAssetQuote(symbol: string) {
+  return invoke<OnlineAssetQuote>("lookup_online_asset_quote", { symbol });
 }
 
 export async function createSecurityFromOnlineResult(input: NewOnlineSecurity) {

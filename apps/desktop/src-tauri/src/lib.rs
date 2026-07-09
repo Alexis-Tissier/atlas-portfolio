@@ -119,6 +119,14 @@ struct OnlineAssetSearchResult {
     match_score: f64,
 }
 
+#[derive(Debug, Serialize)]
+struct OnlineAssetQuote {
+    symbol: String,
+    price: f64,
+    source: String,
+    used_symbol: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct NewOnlineSecurity {
     symbol: String,
@@ -1516,6 +1524,24 @@ fn search_online_assets(query: String) -> Result<Vec<OnlineAssetSearchResult>, S
     }
 
     Ok(results)
+}
+
+#[tauri::command]
+fn lookup_online_asset_quote(symbol: String) -> Result<OnlineAssetQuote, String> {
+    let symbol = preferred_storage_symbol(symbol.trim());
+
+    if symbol.len() < 2 {
+        return Err("Tape au moins 2 caractères pour chercher un cours.".to_string());
+    }
+
+    let quote = fetch_latest_price_with_source(&symbol)?;
+
+    Ok(OnlineAssetQuote {
+        symbol,
+        price: quote.price,
+        source: quote.source,
+        used_symbol: quote.used_symbol,
+    })
 }
 
 #[tauri::command]
@@ -2989,6 +3015,7 @@ pub fn run() {
             update_open_position_prices,
             create_security,
             search_online_assets,
+            lookup_online_asset_quote,
             create_security_from_online_result,
             create_cash_transaction,
             create_trade_transaction,
