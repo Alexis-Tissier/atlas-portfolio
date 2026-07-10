@@ -2972,6 +2972,9 @@ function TransactionsPage({
   const [transactionTypeFilter, setTransactionTypeFilter] = useState("all");
   const [transactionPeriodFilter, setTransactionPeriodFilter] = useState<"all" | "30d" | "90d" | "365d">("all");
   const [visibleTransactionLimit, setVisibleTransactionLimit] = useState(50);
+  const [transactionPendingDeletion, setTransactionPendingDeletion] = useState<DbTransaction | null>(null);
+  const [isDeletingTransaction, setIsDeletingTransaction] = useState(false);
+  const [deleteTransactionError, setDeleteTransactionError] = useState<string | null>(null);
 
   const visibleTransactions = transactions.filter(
     (transaction) => !["opening_position", "opening_cash"].includes(transaction.transaction_type)
@@ -3042,6 +3045,25 @@ function TransactionsPage({
     setVisibleTransactionLimit(50);
   }, [selectedAccountIds, transactionSearch, transactionTypeFilter, transactionPeriodFilter]);
 
+  useEffect(() => {
+    if (!transactionPendingDeletion) {
+      return;
+    }
+
+    function handleDeleteModalKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && !isDeletingTransaction) {
+        setTransactionPendingDeletion(null);
+        setDeleteTransactionError(null);
+      }
+    }
+
+    window.addEventListener("keydown", handleDeleteModalKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleDeleteModalKeyDown);
+    };
+  }, [isDeletingTransaction, transactionPendingDeletion]);
+
   const displayedTransactions = filteredTransactions.slice(0, visibleTransactionLimit);
   const hasMoreTransactions = displayedTransactions.length < filteredTransactions.length;
   const hasActiveFilters = selectedAccountIds.length > 0
@@ -3065,15 +3087,28 @@ function TransactionsPage({
     setVisibleTransactionLimit(50);
   }
 
-  async function handleDeleteTransaction(transaction: DbTransaction) {
-    const confirmed = window.confirm(`Supprimer la transaction du ${formatDate(transaction.date)} ?`);
+  function requestDeleteTransaction(transaction: DbTransaction) {
+    setDeleteTransactionError(null);
+    setTransactionPendingDeletion(transaction);
+  }
 
-    if (!confirmed) {
+  async function confirmDeleteTransaction() {
+    if (!transactionPendingDeletion) {
       return;
     }
 
-    await deleteTransaction(transaction.id);
-    await onTransactionCreated();
+    setIsDeletingTransaction(true);
+    setDeleteTransactionError(null);
+
+    try {
+      await deleteTransaction(transactionPendingDeletion.id);
+      await onTransactionCreated();
+      setTransactionPendingDeletion(null);
+    } catch (error) {
+      setDeleteTransactionError(String(error));
+    } finally {
+      setIsDeletingTransaction(false);
+    }
   }
 
   function openCreateForm() {
@@ -3292,7 +3327,7 @@ function TransactionsPage({
                 <td>
                   <div className="row-actions">
                     <button type="button" onClick={() => openEditForm(transaction)}>Modifier</button>
-                    <button type="button" onClick={() => handleDeleteTransaction(transaction)}>Supprimer</button>
+                    <button type="button" onClick={() => requestDeleteTransaction(transaction)}>Supprimer</button>
                   </div>
                 </td>
               </tr>
@@ -3320,6 +3355,122 @@ function TransactionsPage({
           </div>
         ) : null}
       </article>
+
+      {transactionPendingDeletion ? (
+        <div
+          className="atlas-modal-backdrop"
+          onMouseDown={(event) => {
+            if (
+              event.target === event.currentTarget
+              && !isDeletingTransaction
+            ) {
+              setTransactionPendingDeletion(null);
+              setDeleteTransactionError(null);
+            }
+          }}
+          role="presentation"
+        >
+          <article
+            aria-labelledby="delete-transaction-title"
+            aria-modal="true"
+            className="atlas-confirm-modal"
+            role="dialog"
+          >
+            <div className="atlas-confirm-heading">
+              <div className="atlas-confirm-icon" aria-hidden="true">!</div>
+
+              <div>
+                <span className="atlas-confirm-eyebrow">
+                  Suppression définitive
+                </span>
+
+                <h2 id="delete-transaction-title">
+                  Supprimer cette transaction ?
+                </h2>
+
+                <p>
+                  Le cash et les positions associés seront automatiquement
+                  recalculés.
+                </p>
+              </div>
+            </div>
+
+            <div className="atlas-confirm-summary">
+              <div>
+                <span>Type</span>
+                <strong>
+                  {labelForTransactionType(
+                    transactionPendingDeletion.transaction_type
+                  )}
+                </strong>
+              </div>
+
+              <div>
+                <span>Date</span>
+                <strong>
+                  {formatDate(transactionPendingDeletion.date)}
+                </strong>
+              </div>
+
+              <div>
+                <span>Compte</span>
+                <strong>
+                  {formatTransactionFlow(transactionPendingDeletion)}
+                </strong>
+              </div>
+
+              {transactionPendingDeletion.security_name ? (
+                <div>
+                  <span>Actif</span>
+                  <strong>
+                    {transactionPendingDeletion.security_name}
+                  </strong>
+                </div>
+              ) : null}
+
+              <div>
+                <span>Montant</span>
+                <strong>
+                  {displayEuro(
+                    transactionPendingDeletion.amount,
+                    isPrivacyMode
+                  )}
+                </strong>
+              </div>
+            </div>
+
+            {deleteTransactionError ? (
+              <p className="form-error">{deleteTransactionError}</p>
+            ) : null}
+
+            <div className="atlas-confirm-actions">
+              <button
+                className="secondary-action"
+                disabled={isDeletingTransaction}
+                onClick={() => {
+                  setTransactionPendingDeletion(null);
+                  setDeleteTransactionError(null);
+                }}
+                type="button"
+              >
+                Conserver
+              </button>
+
+              <button
+                className="danger-action"
+                disabled={isDeletingTransaction}
+                onClick={confirmDeleteTransaction}
+                type="button"
+              >
+                {isDeletingTransaction
+                  ? "Suppression..."
+                  : "Supprimer définitivement"}
+              </button>
+            </div>
+          </article>
+        </div>
+      ) : null}
+
     </section>
   );
 }
