@@ -4,6 +4,7 @@ export type DbAccount = {
   id: string;
   name: string;
   account_type: string;
+  currency: string;
   cash_balance: number;
   include_in_net_worth: boolean;
 };
@@ -51,10 +52,12 @@ export type DashboardAccount = {
   id: string;
   name: string;
   account_type: string;
+  currency: string;
   cash_balance: number;
   positions_value: number;
   total_value: number;
   weight: number;
+  include_in_net_worth: boolean;
 };
 
 export type DashboardData = {
@@ -224,8 +227,34 @@ export type NewSecurityInput = {
   current_price: number;
 };
 
+
+export type NewAccountInput = {
+  name: string;
+  account_type: "current_account" | "pea" | "cto" | "livret_a" | "crypto_wallet";
+  currency: string;
+  initial_cash: number;
+  opening_date: string;
+  include_in_net_worth: boolean;
+};
+
+export type UpdateAccountInput = {
+  id: string;
+  name: string;
+  account_type: "current_account" | "pea" | "cto" | "livret_a" | "crypto_wallet";
+  currency: string;
+  include_in_net_worth: boolean;
+};
+
 export async function getAccounts() {
   return invoke<DbAccount[]>("get_accounts");
+}
+
+export async function createAccount(input: NewAccountInput) {
+  return invoke<DbAccount>("create_account", { input });
+}
+
+export async function updateAccount(input: UpdateAccountInput) {
+  return invoke<DbAccount>("update_account", { input });
 }
 
 export async function getPortfolioOverview() {

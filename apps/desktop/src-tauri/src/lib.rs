@@ -13,6 +13,7 @@ struct DbAccount {
     id: String,
     name: String,
     account_type: String,
+    currency: String,
     cash_balance: f64,
     include_in_net_worth: bool,
 }
@@ -66,10 +67,12 @@ struct DashboardAccount {
     id: String,
     name: String,
     account_type: String,
+    currency: String,
     cash_balance: f64,
     positions_value: f64,
     total_value: f64,
     weight: f64,
+    include_in_net_worth: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -283,6 +286,25 @@ struct NewSecurityInput {
     current_price: f64,
 }
 
+#[derive(Debug, Deserialize)]
+struct NewAccountInput {
+    name: String,
+    account_type: String,
+    currency: String,
+    initial_cash: f64,
+    opening_date: String,
+    include_in_net_worth: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateAccountInput {
+    id: String,
+    name: String,
+    account_type: String,
+    currency: String,
+    include_in_net_worth: bool,
+}
+
 #[derive(Debug)]
 struct RawPosition {
     asset: String,
@@ -292,6 +314,7 @@ struct RawPosition {
     quantity: f64,
     value: f64,
     cost: f64,
+    include_in_net_worth: bool,
 }
 
 fn database_path() -> Result<PathBuf, String> {
@@ -837,6 +860,35 @@ fn read_security_by_id(connection: &Connection, security_id: &str) -> Result<DbS
         .map_err(|error| format!("Erreur lecture actif {security_id} : {error}"))
 }
 
+fn read_account_by_id(connection: &Connection, account_id: &str) -> Result<DbAccount, String> {
+    connection
+        .query_row(
+            "
+            SELECT
+              id,
+              name,
+              type AS account_type,
+              currency,
+              cash_balance,
+              include_in_net_worth
+            FROM accounts
+            WHERE id = ?1
+            ",
+            params![account_id],
+            |row| {
+                Ok(DbAccount {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    account_type: row.get(2)?,
+                    currency: row.get(3)?,
+                    cash_balance: row.get(4)?,
+                    include_in_net_worth: row.get::<_, i64>(5)? == 1,
+                })
+            },
+        )
+        .map_err(|error| format!("Erreur lecture compte {account_id} : {error}"))
+}
+
 fn read_accounts(connection: &Connection) -> Result<Vec<DbAccount>, String> {
     let mut statement = connection
         .prepare(
@@ -845,6 +897,7 @@ fn read_accounts(connection: &Connection) -> Result<Vec<DbAccount>, String> {
               id,
               name,
               type AS account_type,
+              currency,
               cash_balance,
               include_in_net_worth
             FROM accounts
@@ -856,7 +909,8 @@ fn read_accounts(connection: &Connection) -> Result<Vec<DbAccount>, String> {
                 WHEN 'livret_a' THEN 4
                 WHEN 'crypto_wallet' THEN 5
                 ELSE 99
-              END
+              END,
+              lower(name)
             ",
         )
         .map_err(|error| format!("Erreur SQL accounts : {error}"))?;
@@ -867,8 +921,9 @@ fn read_accounts(connection: &Connection) -> Result<Vec<DbAccount>, String> {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 account_type: row.get(2)?,
-                cash_balance: row.get(3)?,
-                include_in_net_worth: row.get::<_, i64>(4)? == 1,
+                currency: row.get(3)?,
+                cash_balance: row.get(4)?,
+                include_in_net_worth: row.get::<_, i64>(5)? == 1,
             })
         })
         .map_err(|error| format!("Erreur lecture accounts : {error}"))?;
@@ -894,6 +949,7 @@ fn read_raw_positions(connection: &Connection) -> Result<Vec<RawPosition>, Strin
               p.quantity,
               p.quantity * p.current_price AS value,
               p.quantity * p.average_price AS cost,
+              a.include_in_net_worth,
               (
                 SELECT ph.source
                 FROM prices ph
@@ -926,6 +982,7 @@ fn read_raw_positions(connection: &Connection) -> Result<Vec<RawPosition>, Strin
                 quantity: row.get(4)?,
                 value: row.get(5)?,
                 cost: row.get(6)?,
+                include_in_net_worth: row.get::<_, i64>(7)? == 1,
             })
         })
         .map_err(|error| format!("Erreur lecture positions : {error}"))?;
@@ -963,6 +1020,218 @@ fn update_account_cash(
     Ok(())
 }
 
+fn normalized_account_fields(
+    name: &str,
+    account_type: &str,
+    currency: &str,
+) -> Result<(String, String, String), String> {
+    let name = name.trim().to_string();
+    let account_type = account_type.trim().to_string();
+    let currency = currency.trim().to_uppercase();
+
+    if name.is_empty() {
+        return Err("Le nom du compte est obligatoire.".to_string());
+    }
+
+    if name.chars().count() > 80 {
+        return Err("Le nom du compte ne peut pas dépasser 80 caractères.".to_string());
+    }
+
+    if !matches!(
+        account_type.as_str(),
+        "current_account" | "pea" | "cto" | "livret_a" | "crypto_wallet"
+    ) {
+        return Err("Type de compte invalide.".to_string());
+    }
+
+    if currency.len() != 3
+        || !currency
+            .chars()
+            .all(|character| character.is_ascii_alphabetic())
+    {
+        return Err("La devise doit contenir trois lettres, par exemple EUR.".to_string());
+    }
+
+    Ok((name, account_type, currency))
+}
+
+fn ensure_unique_account_name(
+    connection: &Connection,
+    name: &str,
+    excluded_account_id: Option<&str>,
+) -> Result<(), String> {
+    let duplicate = connection
+        .query_row(
+            "
+            SELECT id
+            FROM accounts
+            WHERE lower(name) = lower(?1)
+              AND (?2 IS NULL OR id <> ?2)
+            LIMIT 1
+            ",
+            params![name, excluded_account_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("Erreur recherche doublon compte : {error}"))?;
+
+    if duplicate.is_some() {
+        return Err("Un compte avec ce nom existe déjà.".to_string());
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn create_account(input: NewAccountInput) -> Result<DbAccount, String> {
+    let (name, account_type, currency) =
+        normalized_account_fields(&input.name, &input.account_type, &input.currency)?;
+
+    if !input.initial_cash.is_finite() || input.initial_cash < 0.0 {
+        return Err("Le cash initial doit être un montant positif ou nul.".to_string());
+    }
+
+    let opening_date = input.opening_date.trim().to_string();
+    if opening_date.is_empty() {
+        return Err("La date d'ouverture est obligatoire.".to_string());
+    }
+
+    let mut connection = open_database()?;
+    ensure_unique_account_name(&connection, &name, None)?;
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("Erreur horloge système : {error}"))?
+        .as_millis();
+
+    let safe_name = name
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string();
+
+    let account_id = format!(
+        "account-{}-{now}",
+        if safe_name.is_empty() {
+            "nouveau"
+        } else {
+            &safe_name
+        }
+    );
+
+    let sqlite_transaction = connection
+        .transaction()
+        .map_err(|error| format!("Impossible de démarrer la création du compte : {error}"))?;
+
+    sqlite_transaction
+        .execute(
+            "
+            INSERT INTO accounts (
+              id,
+              name,
+              type,
+              currency,
+              cash_balance,
+              include_in_net_worth
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ",
+            params![
+                &account_id,
+                &name,
+                &account_type,
+                &currency,
+                input.initial_cash,
+                if input.include_in_net_worth { 1 } else { 0 }
+            ],
+        )
+        .map_err(|error| format!("Erreur création compte : {error}"))?;
+
+    if input.initial_cash > 0.000001 {
+        let transaction_id = format!("tx-opening-cash-{now}");
+        let note = format!("Cash initial du compte {name}.");
+
+        sqlite_transaction
+            .execute(
+                "
+                INSERT INTO transactions (
+                  id,
+                  date,
+                  type,
+                  account_id,
+                  fees,
+                  amount,
+                  note
+                )
+                VALUES (?1, ?2, 'opening_cash', ?3, 0, ?4, ?5)
+                ",
+                params![
+                    transaction_id,
+                    opening_date,
+                    &account_id,
+                    input.initial_cash,
+                    note
+                ],
+            )
+            .map_err(|error| format!("Erreur création cash initial : {error}"))?;
+    }
+
+    sqlite_transaction
+        .commit()
+        .map_err(|error| format!("Erreur validation du nouveau compte : {error}"))?;
+
+    read_account_by_id(&connection, &account_id)
+}
+
+#[tauri::command]
+fn update_account(input: UpdateAccountInput) -> Result<DbAccount, String> {
+    let account_id = input.id.trim().to_string();
+    if account_id.is_empty() {
+        return Err("Identifiant de compte obligatoire.".to_string());
+    }
+
+    let (name, account_type, currency) =
+        normalized_account_fields(&input.name, &input.account_type, &input.currency)?;
+
+    let connection = open_database()?;
+    read_account_by_id(&connection, &account_id)?;
+    ensure_unique_account_name(&connection, &name, Some(&account_id))?;
+
+    let changed = connection
+        .execute(
+            "
+            UPDATE accounts
+            SET name = ?1,
+                type = ?2,
+                currency = ?3,
+                include_in_net_worth = ?4,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?5
+            ",
+            params![
+                name,
+                account_type,
+                currency,
+                if input.include_in_net_worth { 1 } else { 0 },
+                account_id
+            ],
+        )
+        .map_err(|error| format!("Erreur modification compte : {error}"))?;
+
+    if changed != 1 {
+        return Err("Compte introuvable.".to_string());
+    }
+
+    read_account_by_id(&connection, &input.id)
+}
+
 #[tauri::command]
 fn get_accounts() -> Result<Vec<DbAccount>, String> {
     let connection = open_database()?;
@@ -982,6 +1251,8 @@ fn get_portfolio_overview() -> Result<Vec<PortfolioOverviewRow>, String> {
             p.quantity * p.current_price AS value
           FROM positions p
           JOIN securities s ON s.id = p.security_id
+          JOIN accounts a ON a.id = p.account_id
+          WHERE a.include_in_net_worth = 1
 
           UNION ALL
 
@@ -1032,11 +1303,13 @@ fn get_dashboard_data() -> Result<DashboardData, String> {
 
     let positions_total = raw_positions
         .iter()
+        .filter(|position| position.include_in_net_worth)
         .map(|position| position.value)
         .sum::<f64>();
 
     let positions_cost = raw_positions
         .iter()
+        .filter(|position| position.include_in_net_worth)
         .map(|position| position.cost)
         .sum::<f64>();
 
@@ -1050,6 +1323,7 @@ fn get_dashboard_data() -> Result<DashboardData, String> {
 
     let positions = raw_positions
         .iter()
+        .filter(|position| position.include_in_net_worth)
         .map(|position| DashboardPosition {
             asset: position.asset.clone(),
             category: position.category.clone(),
@@ -1077,9 +1351,11 @@ fn get_dashboard_data() -> Result<DashboardData, String> {
     ]);
 
     for position in &raw_positions {
-        *allocation_values
-            .entry(position.category.clone())
-            .or_insert(0.0) += position.value;
+        if position.include_in_net_worth {
+            *allocation_values
+                .entry(position.category.clone())
+                .or_insert(0.0) += position.value;
+        }
     }
 
     let mut statement = connection
@@ -1144,14 +1420,16 @@ fn get_dashboard_data() -> Result<DashboardData, String> {
                 id: account.id.clone(),
                 name: account.name.clone(),
                 account_type: account.account_type.clone(),
+                currency: account.currency.clone(),
                 cash_balance: account.cash_balance,
                 positions_value,
                 total_value,
-                weight: if total > 0.0 {
+                weight: if account.include_in_net_worth && total > 0.0 {
                     (total_value / total) * 100.0
                 } else {
                     0.0
                 },
+                include_in_net_worth: account.include_in_net_worth,
             }
         })
         .collect::<Vec<_>>();
@@ -3450,6 +3728,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             get_accounts,
+            create_account,
+            update_account,
             get_portfolio_overview,
             get_dashboard_data,
             get_transactions,

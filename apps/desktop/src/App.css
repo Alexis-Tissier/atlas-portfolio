@@ -6181,3 +6181,106 @@ td:first-child { color: #374151; font-weight: 600; }
     width: 100%;
   }
 }
+
+
+/* Account management */
+.account-card-actions { display: flex; align-items: center; gap: 8px; }
+.account-summary-card .status-header { align-items: flex-start; }
+.account-summary-card .status-header h2 { margin: 0; }
+.account-summary-card .status-header .muted { margin: 4px 0 0; font-size: 11px; }
+.account-summary-line span { line-height: 1.45; }
+
+.account-manager-modal {
+  width: min(720px, 100%);
+  max-height: min(760px, calc(100vh - 48px));
+  overflow: auto;
+  border: 1px solid #e3e8ef;
+  border-radius: 22px;
+  background: #fff;
+  box-shadow: 0 24px 80px rgba(15, 23, 42, .24);
+  padding: 22px;
+  animation: atlas-modal-enter .16s ease-out;
+}
+
+.account-manager-header,
+.account-manager-toolbar,
+.account-manager-form-actions { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.account-manager-header > div > span { color: #7a91b3; font-size: 10px; font-weight: 950; letter-spacing: .08em; text-transform: uppercase; }
+.account-manager-header h2 { margin: 5px 0; color: #202b3a; font-size: 21px; font-weight: 950; }
+.account-manager-header p { margin: 0; color: #748092; font-size: 12px; line-height: 1.5; }
+.account-manager-toolbar { align-items: center; margin: 20px 0 12px; }
+.account-manager-toolbar p { margin: 0; color: #8a95a4; font-size: 12px; font-weight: 800; }
+.account-manager-list { display: grid; gap: 9px; }
+
+.account-manager-row {
+  width: 100%;
+  border: 1px solid #e7ebf0;
+  border-radius: 14px;
+  background: #fbfcfd;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 13px 14px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.account-manager-row:hover { border-color: #b8c8df; background: #f7faff; }
+.account-manager-row strong, .account-manager-row span { display: block; }
+.account-manager-row > div:first-child strong { color: #253142; font-size: 13px; font-weight: 950; }
+.account-manager-row > div:first-child span, .account-manager-row-value span { margin-top: 4px; color: #8a95a4; font-size: 11px; font-weight: 750; }
+.account-manager-row-value { text-align: right; }
+.account-manager-row-value strong { color: #253142; font-size: 13px; font-weight: 950; }
+.account-manager-empty { border: 1px dashed #d8e0ea; border-radius: 14px; padding: 24px; text-align: center; }
+.account-manager-empty strong { color: #253142; }
+.account-manager-empty p { margin: 6px 0 0; color: #8a95a4; font-size: 12px; }
+.account-manager-form { margin-top: 20px; }
+.account-manager-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
+.account-manager-form label { display: grid; gap: 6px; color: #667384; font-size: 11px; font-weight: 850; }
+.account-manager-form input, .account-manager-form select { width: 100%; min-height: 42px; border: 1px solid #dfe5ec; border-radius: 11px; background: #fff; color: #253142; padding: 9px 11px; font: inherit; }
+.account-manager-form input:focus, .account-manager-form select:focus { outline: 2px solid rgba(125, 167, 245, .2); border-color: #7da7f5; }
+.account-current-balance { display: grid; align-content: center; border: 1px solid #e7ebf0; border-radius: 12px; background: #f8fafc; padding: 11px 13px; }
+.account-current-balance span, .account-current-balance small { color: #8a95a4; font-size: 10px; font-weight: 750; }
+.account-current-balance strong { margin: 4px 0; color: #253142; font-size: 15px; font-weight: 950; }
+.account-manager-checkbox { display: flex !important; align-items: flex-start; gap: 10px !important; margin-top: 15px; border: 1px solid #e7ebf0; border-radius: 12px; background: #f8fafc; padding: 12px 13px; cursor: pointer; }
+.account-manager-checkbox input { width: auto; min-height: auto; margin-top: 2px; }
+.account-manager-checkbox span { display: grid; gap: 3px; }
+.account-manager-checkbox strong { color: #253142; font-size: 12px; }
+.account-manager-checkbox small { color: #7f8996; font-size: 11px; line-height: 1.4; }
+.account-manager-form-actions { align-items: center; justify-content: flex-end; margin-top: 18px; }
+
+.app-shell.dark .account-manager-modal { border-color: #293443; background: #151c25; }
+.app-shell.dark .account-manager-header h2,
+.app-shell.dark .account-manager-row strong,
+.app-shell.dark .account-current-balance strong,
+.app-shell.dark .account-manager-checkbox strong,
+.app-shell.dark .account-manager-empty strong { color: #f3f4f6; }
+.app-shell.dark .account-manager-header p,
+.app-shell.dark .account-manager-toolbar p,
+.app-shell.dark .account-manager-row span,
+.app-shell.dark .account-current-balance span,
+.app-shell.dark .account-current-balance small,
+.app-shell.dark .account-manager-checkbox small,
+.app-shell.dark .account-manager-form label { color: #a8b3c1; }
+.app-shell.dark .account-manager-row,
+.app-shell.dark .account-current-balance,
+.app-shell.dark .account-manager-checkbox { border-color: #293443; background: #10161e; }
+.app-shell.dark .account-manager-form input,
+.app-shell.dark .account-manager-form select { border-color: #293443; background: #10161e; color: #f3f4f6; }
+
+/* Precise alignment for Aperçu allocation bars */
+.overview-clean-bar-row > div:first-child { width: 120px; min-width: 0; }
+.overview-clean-bar-track { width: 100%; margin: 0; }
+.overview-clean-bar-track > span { margin-top: 0 !important; width: auto; }
+
+@media (max-width: 760px) {
+  .account-manager-modal { max-height: calc(100vh - 24px); border-radius: 18px; padding: 18px; }
+  .account-manager-header, .account-manager-toolbar { align-items: stretch; flex-direction: column; }
+  .account-manager-form-grid { grid-template-columns: 1fr; }
+  .account-manager-row { align-items: flex-start; flex-direction: column; }
+  .account-manager-row-value { text-align: left; }
+  .account-manager-form-actions { display: grid; grid-template-columns: 1fr; }
+  .account-manager-form-actions button { width: 100%; }
+}

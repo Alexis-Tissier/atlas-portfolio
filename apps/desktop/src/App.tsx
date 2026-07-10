@@ -4,25 +4,31 @@ import "./App.css";
 import { monthlyContribution } from "./mocks/mockPortfolio";
 import { formatEuro, getAllocationRows, getPositionRows, getPortfolioSummary } from "./core/portfolioCalculations";
 import {
+  createAccount,
   createCashTransaction,
   createSecurityFromOnlineResult,
   createTradeTransaction,
   createOpeningPositionAdjustments,
   createOpeningCashAdjustments,
   deleteTransaction,
+  getAccounts,
   getDashboardData,
   getPositionsPage,
   getSecurities,
   getTransactions,
   searchOnlineAssets,
   lookupOnlineAssetHistory,
+  updateAccount,
   updateTransaction,
   updateOpenPositionPrices,
   type DashboardData,
+  type DbAccount,
   type DbSecurity,
   type DbTransaction,
+  type NewAccountInput,
   type NewCashTransaction,
   type NewTradeTransaction,
+  type UpdateAccountInput,
   type UpdateTransactionInput,
   type PriceUpdateSummary,
   type PositionPageRow,
@@ -165,6 +171,7 @@ type RecommendationPlan = {
 function App() {
   const [currentPage, setCurrentPage] = useState("Portefeuille");
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
+  const [managedAccounts, setManagedAccounts] = useState<DbAccount[]>([]);
   const [transactions, setTransactions] = useState<DbTransaction[]>([]);
   const [securities, setSecurities] = useState<DbSecurity[]>([]);
   const [positionsPageRows, setPositionsPageRows] = useState<PositionPageRow[]>([]);
@@ -283,6 +290,13 @@ function App() {
     } catch (error) {
       console.error(error);
       setDatabaseError(String(error));
+    }
+
+    try {
+      const data = await getAccounts();
+      setManagedAccounts(data);
+    } catch (error) {
+      console.error(error);
     }
 
     try {
@@ -593,6 +607,8 @@ function App() {
             databaseError={databaseError}
             dashboardData={dashboardData}
             isPrivacyMode={isPrivacyMode}
+            managedAccounts={managedAccounts}
+            onAccountsChanged={refreshData}
             positionRows={positionRows}
             summary={summary}
             snapshots={chartSnapshots}
@@ -1044,6 +1060,8 @@ function DashboardPage({
   dashboardData,
   isPrivacyMode,
   isUpdatingPrices,
+  managedAccounts,
+  onAccountsChanged,
   onPriceRefresh,
   onNavigate,
   positionRows,
@@ -1058,6 +1076,8 @@ function DashboardPage({
   dashboardData: DashboardData | null;
   isPrivacyMode: boolean;
   isUpdatingPrices: boolean;
+  managedAccounts: DbAccount[];
+  onAccountsChanged: () => Promise<void>;
   onPriceRefresh: () => void;
   onNavigate: (page: string) => void;
   positionRows: { asset: string; category: string; account: string; quantity: string; value: string; weight: string; performance: string }[];
@@ -1074,6 +1094,7 @@ function DashboardPage({
 
   const allocationDonutBackground = buildAllocationDonut(actualAllocationRows);
   const [chartPeriod, setChartPeriod] = useState<ChartPeriod>("all");
+  const [isAccountManagerOpen, setIsAccountManagerOpen] = useState(false);
 
   return (
     <section className="page">
@@ -1203,28 +1224,57 @@ function DashboardPage({
 
           </article>
 
-          <article className="card sqlite-status-card">
+          <article className="card sqlite-status-card account-summary-card">
             <div className="status-header">
-              <h2>Mes portefeuilles</h2>
-              <span className={dashboardData ? "status-pill connected" : "status-pill warning"}>
-                {dashboardData ? "À jour" : "Démo"}
-              </span>
+              <div>
+                <h2>Mes comptes</h2>
+                <p className="muted">Les comptes utilisés dans Atlas.</p>
+              </div>
+
+              <div className="account-card-actions">
+                <span className={dashboardData ? "status-pill connected" : "status-pill warning"}>
+                  {dashboardData ? "À jour" : "Démo"}
+                </span>
+
+                <button className="secondary-action" onClick={() => setIsAccountManagerOpen(true)} type="button">
+                  Gérer
+                </button>
+              </div>
             </div>
 
             {databaseError ? <p className="error-text">{databaseError}</p> : null}
 
             <div className="accounts-list">
               {accounts.map((account) => (
-                <div className="account-line" key={account.id}>
+                <div className="account-line account-summary-line" key={account.id}>
                   <div>
                     <strong>{account.name}</strong>
-                    <span>{labelForAccountType(account.account_type)}</span>
+                    <span>
+                      {labelForAccountType(account.account_type)}
+                      {" · "}
+                      {account.currency}
+                      {!account.include_in_net_worth ? " · hors patrimoine" : ""}
+                    </span>
                   </div>
                   <p>{displayEuro(account.total_value, isPrivacyMode)}</p>
                 </div>
               ))}
+
+              {accounts.length === 0 ? (
+                <p className="muted">Aucun compte. Utilise « Gérer » pour commencer.</p>
+              ) : null}
             </div>
           </article>
+
+          {isAccountManagerOpen ? (
+            <AccountManagerModal
+              accounts={managedAccounts}
+              activeAccounts={accounts}
+              isPrivacyMode={isPrivacyMode}
+              onClose={() => setIsAccountManagerOpen(false)}
+              onSaved={onAccountsChanged}
+            />
+          ) : null}
 
           
 
@@ -1240,6 +1290,276 @@ function DashboardPage({
 
 
 
+
+
+type AccountFormState = {
+  name: string;
+  accountType: NewAccountInput["account_type"];
+  currency: string;
+  initialCash: string;
+  openingDate: string;
+  includeInNetWorth: boolean;
+};
+
+function AccountManagerModal({
+  accounts,
+  activeAccounts,
+  isPrivacyMode,
+  onClose,
+  onSaved,
+}: {
+  accounts: DbAccount[];
+  activeAccounts: DashboardData["accounts"];
+  isPrivacyMode: boolean;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [mode, setMode] = useState<"list" | "create" | "edit">("list");
+  const [editingAccount, setEditingAccount] = useState<DbAccount | null>(null);
+  const [form, setForm] = useState<AccountFormState>({
+    name: "",
+    accountType: "pea",
+    currency: "EUR",
+    initialCash: "0",
+    openingDate: today,
+    includeInNetWorth: true,
+  });
+  const [formError, setFormError] = useState<string | null>(null);
+  const [formSuccess, setFormSuccess] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape" && !isSaving) {
+        onClose();
+      }
+    }
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [isSaving, onClose]);
+
+  function openCreateForm() {
+    setEditingAccount(null);
+    setForm({
+      name: "",
+      accountType: "pea",
+      currency: "EUR",
+      initialCash: "0",
+      openingDate: today,
+      includeInNetWorth: true,
+    });
+    setFormError(null);
+    setFormSuccess(null);
+    setMode("create");
+  }
+
+  function openEditForm(account: DbAccount) {
+    setEditingAccount(account);
+    setForm({
+      name: account.name,
+      accountType: account.account_type as NewAccountInput["account_type"],
+      currency: account.currency,
+      initialCash: "0",
+      openingDate: today,
+      includeInNetWorth: account.include_in_net_worth,
+    });
+    setFormError(null);
+    setFormSuccess(null);
+    setMode("edit");
+  }
+
+  async function saveAccount(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFormError(null);
+    setFormSuccess(null);
+
+    const name = form.name.trim();
+    const currency = form.currency.trim().toUpperCase();
+    const initialCash = parseDecimal(form.initialCash || "0");
+
+    if (!name) {
+      setFormError("Donne un nom au compte.");
+      return;
+    }
+
+    if (currency.length !== 3) {
+      setFormError("La devise doit contenir trois lettres.");
+      return;
+    }
+
+    if (mode === "create" && (!Number.isFinite(initialCash) || initialCash < 0)) {
+      setFormError("Le cash initial doit être positif ou nul.");
+      return;
+    }
+
+    setIsSaving(true);
+
+    try {
+      if (mode === "create") {
+        await createAccount({
+          name,
+          account_type: form.accountType,
+          currency,
+          initial_cash: initialCash,
+          opening_date: form.openingDate,
+          include_in_net_worth: form.includeInNetWorth,
+        });
+        setFormSuccess("Compte créé.");
+      } else if (editingAccount) {
+        const payload: UpdateAccountInput = {
+          id: editingAccount.id,
+          name,
+          account_type: form.accountType,
+          currency,
+          include_in_net_worth: form.includeInNetWorth,
+        };
+        await updateAccount(payload);
+        setFormSuccess("Compte modifié.");
+      }
+
+      await onSaved();
+      setMode("list");
+      setEditingAccount(null);
+    } catch (error) {
+      setFormError(String(error));
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <div
+      className="atlas-modal-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !isSaving) onClose();
+      }}
+      role="presentation"
+    >
+      <article aria-labelledby="account-manager-title" aria-modal="true" className="account-manager-modal" role="dialog">
+        <div className="account-manager-header">
+          <div>
+            <span>Portefeuille</span>
+            <h2 id="account-manager-title">
+              {mode === "list" ? "Mes comptes" : mode === "create" ? "Ajouter un compte" : "Modifier le compte"}
+            </h2>
+            <p>
+              {mode === "list"
+                ? "Ajoute ou configure les comptes utilisés par les transactions."
+                : "Le solde se modifiera ensuite uniquement depuis les transactions."}
+            </p>
+          </div>
+          <button className="secondary-action" disabled={isSaving} onClick={onClose} type="button">Fermer</button>
+        </div>
+
+        {mode === "list" ? (
+          <>
+            <div className="account-manager-toolbar">
+              <p>{accounts.length} compte(s)</p>
+              <button className="primary-action" onClick={openCreateForm} type="button">+ Ajouter un compte</button>
+            </div>
+
+            {formSuccess ? <p className="form-success">{formSuccess}</p> : null}
+
+            <div className="account-manager-list">
+              {accounts.map((account) => {
+                const dashboardAccount = activeAccounts.find((item) => item.id === account.id);
+                const displayedValue = dashboardAccount?.total_value ?? account.cash_balance;
+
+                return (
+                  <button className="account-manager-row" key={account.id} onClick={() => openEditForm(account)} type="button">
+                    <div>
+                      <strong>{account.name}</strong>
+                      <span>{labelForAccountType(account.account_type)} · {account.currency}</span>
+                    </div>
+                    <div className="account-manager-row-value">
+                      <strong>{displayEuro(displayedValue, isPrivacyMode)}</strong>
+                      <span>{account.include_in_net_worth ? "Inclus dans le patrimoine" : "Hors patrimoine"}</span>
+                    </div>
+                  </button>
+                );
+              })}
+
+              {accounts.length === 0 ? (
+                <div className="account-manager-empty">
+                  <strong>Aucun compte</strong>
+                  <p>Commence par ajouter ton PEA, ton CTO ou ton compte courant.</p>
+                </div>
+              ) : null}
+            </div>
+          </>
+        ) : (
+          <form className="account-manager-form" onSubmit={saveAccount}>
+            <div className="account-manager-form-grid">
+              <label>
+                Nom du compte
+                <input autoFocus onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder="Ex. PEA BoursoBank" value={form.name} />
+              </label>
+
+              <label>
+                Type
+                <select onChange={(event) => setForm((current) => ({ ...current, accountType: event.target.value as NewAccountInput["account_type"] }))} value={form.accountType}>
+                  <option value="pea">PEA</option>
+                  <option value="cto">Compte-titres</option>
+                  <option value="current_account">Compte courant</option>
+                  <option value="livret_a">Livret A</option>
+                  <option value="crypto_wallet">Compte crypto</option>
+                </select>
+              </label>
+
+              <label>
+                Devise
+                <select onChange={(event) => setForm((current) => ({ ...current, currency: event.target.value }))} value={form.currency}>
+                  <option value="EUR">EUR</option>
+                  <option value="USD">USD</option>
+                  <option value="GBP">GBP</option>
+                  <option value="CHF">CHF</option>
+                </select>
+              </label>
+
+              {mode === "create" ? (
+                <>
+                  <label>
+                    Cash initial
+                    <input inputMode="decimal" onChange={(event) => setForm((current) => ({ ...current, initialCash: event.target.value }))} placeholder="0" value={form.initialCash} />
+                  </label>
+                  <label>
+                    Date du cash initial
+                    <input onChange={(event) => setForm((current) => ({ ...current, openingDate: event.target.value }))} type="date" value={form.openingDate} />
+                  </label>
+                </>
+              ) : (
+                <div className="account-current-balance">
+                  <span>Cash actuel</span>
+                  <strong>{displayEuro(editingAccount?.cash_balance ?? 0, isPrivacyMode)}</strong>
+                  <small>À modifier depuis Transactions.</small>
+                </div>
+              )}
+            </div>
+
+            <label className="account-manager-checkbox">
+              <input checked={form.includeInNetWorth} onChange={(event) => setForm((current) => ({ ...current, includeInNetWorth: event.target.checked }))} type="checkbox" />
+              <span>
+                <strong>Inclure dans le patrimoine total</strong>
+                <small>Désactive cette option pour conserver le compte dans Atlas sans l’intégrer aux totaux.</small>
+              </span>
+            </label>
+
+            {formError ? <p className="form-error">{formError}</p> : null}
+
+            <div className="account-manager-form-actions">
+              <button className="secondary-action" disabled={isSaving} onClick={() => { setMode("list"); setEditingAccount(null); setFormError(null); }} type="button">Retour</button>
+              <button className="primary-action" disabled={isSaving} type="submit">
+                {isSaving ? "Enregistrement..." : mode === "create" ? "Créer le compte" : "Enregistrer"}
+              </button>
+            </div>
+          </form>
+        )}
+      </article>
+    </div>
+  );
+}
 
 type PerformanceSeriesPoint = {
   date: string;
