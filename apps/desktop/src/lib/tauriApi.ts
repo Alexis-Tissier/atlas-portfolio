@@ -107,7 +107,9 @@ export type DbSecurity = {
   id: string;
   name: string;
   ticker: string;
+  isin: string | null;
   asset_class: string;
+  currency: string;
   current_price: number;
 };
 
@@ -227,7 +229,18 @@ export type BatchImportResult = {
 export type NewSecurityInput = {
   name: string;
   ticker: string;
-  asset_class: "ETF" | "Actions" | "Crypto" | "Cash";
+  isin?: string | null;
+  asset_class:
+    | "ETF"
+    | "Actions"
+    | "Fonds"
+    | "Obligations"
+    | "Monétaire"
+    | "Immobilier"
+    | "Matières premières"
+    | "Crypto"
+    | "Cash"
+    | "Autre";
   currency: string;
   current_price: number;
 };

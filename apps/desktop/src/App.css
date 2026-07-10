@@ -6322,3 +6322,157 @@ td:first-child { color: #374151; font-weight: 600; }
 .app-shell.dark .csv-secure-import-note span {
   color: #a8b3c1;
 }
+
+
+/* CSV asset resolver and extended asset classes */
+.csv-status.asset_missing {
+  background: rgba(210, 145, 43, .14);
+  color: #966314;
+}
+
+.csv-missing-assets {
+  display: grid;
+  gap: 12px;
+  margin: 16px 0;
+  border: 1px solid rgba(210, 145, 43, .28);
+  border-radius: 15px;
+  background: rgba(210, 145, 43, .06);
+  padding: 15px;
+}
+
+.csv-missing-assets-title strong {
+  color: #58431e;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.csv-missing-assets-title p {
+  margin: 5px 0 0;
+  color: #7b6a48;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.csv-missing-assets-list {
+  display: grid;
+  gap: 10px;
+}
+
+.csv-missing-asset-card {
+  border: 1px solid rgba(210, 145, 43, .22);
+  border-radius: 13px;
+  background: #fff;
+  padding: 13px;
+}
+
+.csv-missing-asset-heading,
+.csv-missing-asset-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.csv-missing-asset-heading > div strong,
+.csv-missing-asset-heading > div span {
+  display: block;
+}
+
+.csv-missing-asset-heading > div strong {
+  color: #253142;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.csv-missing-asset-heading > div span {
+  margin-top: 3px;
+  color: #8a95a4;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.csv-missing-asset-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.csv-missing-asset-grid label {
+  display: grid;
+  gap: 5px;
+  color: #6f7a88;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.csv-missing-asset-grid input,
+.csv-missing-asset-grid select {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid #dfe5ec;
+  border-radius: 10px;
+  background: #fff;
+  color: #253142;
+  padding: 8px 10px;
+  font: inherit;
+}
+
+.csv-missing-asset-actions {
+  align-items: center;
+  margin-top: 12px;
+}
+
+.csv-missing-asset-actions small {
+  max-width: 430px;
+  color: #7f8996;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.app-shell.dark .csv-status.asset_missing {
+  background: rgba(224, 166, 45, .18);
+  color: #f3ca71;
+}
+
+.app-shell.dark .csv-missing-assets {
+  border-color: rgba(224, 166, 45, .28);
+  background: rgba(224, 166, 45, .08);
+}
+
+.app-shell.dark .csv-missing-assets-title strong,
+.app-shell.dark .csv-missing-asset-heading > div strong {
+  color: #f3f4f6;
+}
+
+.app-shell.dark .csv-missing-assets-title p,
+.app-shell.dark .csv-missing-asset-heading > div span,
+.app-shell.dark .csv-missing-asset-grid label,
+.app-shell.dark .csv-missing-asset-actions small {
+  color: #a8b3c1;
+}
+
+.app-shell.dark .csv-missing-asset-card,
+.app-shell.dark .csv-missing-asset-grid input,
+.app-shell.dark .csv-missing-asset-grid select {
+  border-color: #293443;
+  background: #10161e;
+  color: #f3f4f6;
+}
+
+@media (max-width: 900px) {
+  .csv-missing-asset-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 620px) {
+  .csv-missing-asset-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .csv-missing-asset-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

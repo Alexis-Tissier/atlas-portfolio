@@ -6,6 +6,7 @@ import { formatEuro, getAllocationRows, getPositionRows, getPortfolioSummary } f
 import {
   createAccount,
   createCashTransaction,
+  createSecurity,
   createSecurityFromOnlineResult,
   createTradeTransaction,
   createOpeningPositionAdjustments,
@@ -28,6 +29,7 @@ import {
   type DbTransaction,
   type NewAccountInput,
   type NewCashTransaction,
+  type NewSecurityInput,
   type NewTradeTransaction,
   type UpdateAccountInput,
   type UpdateTransactionInput,
@@ -52,6 +54,30 @@ const nav = [
 type TransactionFormType = "deposit" | "withdrawal" | "transfer" | "buy" | "sell" | "dividend" | "fee";
 type CashTransactionType = "deposit" | "withdrawal" | "transfer" | "dividend" | "fee";
 type MarketChartPeriod = "1M" | "6M" | "1A" | "5A" | "MAX";
+
+
+const supportedAssetClasses: NewSecurityInput["asset_class"][] = [
+  "ETF",
+  "Actions",
+  "Fonds",
+  "Obligations",
+  "Monétaire",
+  "Immobilier",
+  "Matières premières",
+  "Crypto",
+  "Cash",
+  "Autre",
+];
+
+type MissingAssetReference = {
+  key: string;
+  name: string;
+  ticker: string;
+  isin: string;
+  assetClass: NewSecurityInput["asset_class"];
+  currency: string;
+  currentPrice: number;
+};
 
 const marketChartPeriods: MarketChartPeriod[] = ["1M", "6M", "1A", "5A", "MAX"];
 
@@ -85,7 +111,7 @@ type AllocationDisplayRow = {
 
 type CsvImportCandidate = {
   row: Record<string, string>;
-  status: "valid" | "error" | "duplicate";
+  status: "valid" | "error" | "duplicate" | "asset_missing";
   message: string;
   payload?: NewCashTransaction | NewTradeTransaction;
 };
@@ -4696,7 +4722,11 @@ function AssetPicker({
               >
                 <span>
                   <strong>{security.name}</strong>
-                  <small>{security.ticker} · {security.asset_class}</small>
+                  <small>
+                    {security.ticker}
+                    {security.isin ? ` · ${security.isin}` : ""}
+                    {` · ${security.asset_class}`}
+                  </small>
                 </span>
                 <em>{displayEuro(security.current_price, isPrivacyMode)}</em>
               </button>
@@ -5133,6 +5163,201 @@ function buildPortfolioAuditItems(
 }
 
 
+
+function buildMissingAssetReferences(candidates: CsvImportCandidate[]): MissingAssetReference[] {
+  const references = new Map<string, MissingAssetReference>();
+
+  for (const candidate of candidates) {
+    if (candidate.status !== "asset_missing") {
+      continue;
+    }
+
+    const row = candidate.row;
+    const isin = normalizeCsvValue(row.isin).replace(/\s/g, "").toUpperCase();
+    const ticker = normalizeCsvValue(row.ticker).toUpperCase();
+    const name = normalizeCsvValue(row.actif) || ticker || isin || "Actif sans nom";
+    const key = isin || ticker || normalizeCsvLookup(name);
+    const price = parseCsvNumber(row.prix) ?? 0;
+    const existing = references.get(key);
+
+    if (existing) {
+      if (existing.currentPrice <= 0 && price > 0) {
+        existing.currentPrice = price;
+      }
+      continue;
+    }
+
+    references.set(key, {
+      key,
+      name,
+      ticker,
+      isin,
+      assetClass: normalizeAssetClassInput(row.classe),
+      currency: normalizeCsvValue(row.devise).toUpperCase() || "EUR",
+      currentPrice: Math.max(price, 0),
+    });
+  }
+
+  return [...references.values()];
+}
+
+function MissingAssetCard({
+  reference,
+  onCreated,
+}: {
+  reference: MissingAssetReference;
+  onCreated: () => Promise<void>;
+}) {
+  const [name, setName] = useState(reference.name);
+  const [ticker, setTicker] = useState(reference.ticker || reference.isin);
+  const [isin, setIsin] = useState(reference.isin);
+  const [assetClass, setAssetClass] = useState<NewSecurityInput["asset_class"]>(reference.assetClass);
+  const [currency, setCurrency] = useState(reference.currency);
+  const [currentPrice, setCurrentPrice] = useState(
+    reference.currentPrice > 0 ? formatInputDecimal(reference.currentPrice) : "0",
+  );
+  const [isCreating, setIsCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleCreate() {
+    const parsedPrice = parseDecimal(currentPrice || "0");
+
+    if (!name.trim()) {
+      setError("Le nom de l'actif est obligatoire.");
+      return;
+    }
+
+    if (!ticker.trim() && !isin.trim()) {
+      setError("Indique au moins un ticker, un code interne ou un ISIN.");
+      return;
+    }
+
+    if (!Number.isFinite(parsedPrice) || parsedPrice < 0) {
+      setError("Le cours doit être positif ou nul.");
+      return;
+    }
+
+    setIsCreating(true);
+    setError(null);
+
+    try {
+      await createSecurity({
+        name: name.trim(),
+        ticker: ticker.trim(),
+        isin: isin.trim() || null,
+        asset_class: assetClass,
+        currency: currency.trim().toUpperCase() || "EUR",
+        current_price: parsedPrice,
+      });
+      await onCreated();
+    } catch (creationError) {
+      setError(String(creationError));
+    } finally {
+      setIsCreating(false);
+    }
+  }
+
+  return (
+    <article className="csv-missing-asset-card">
+      <div className="csv-missing-asset-heading">
+        <div>
+          <strong>{reference.name}</strong>
+          <span>{reference.isin || reference.ticker || "Référence absente"}</span>
+        </div>
+        <span className="csv-status asset_missing">À créer</span>
+      </div>
+
+      <div className="csv-missing-asset-grid">
+        <label>
+          Nom
+          <input value={name} onChange={(event) => setName(event.target.value)} />
+        </label>
+
+        <label>
+          Ticker ou code interne
+          <input value={ticker} onChange={(event) => setTicker(event.target.value)} />
+        </label>
+
+        <label>
+          ISIN
+          <input value={isin} onChange={(event) => setIsin(event.target.value.toUpperCase())} />
+        </label>
+
+        <label>
+          Classe
+          <select
+            value={assetClass}
+            onChange={(event) => setAssetClass(event.target.value as NewSecurityInput["asset_class"])}
+          >
+            {supportedAssetClasses.map((value) => (
+              <option key={value} value={value}>{value}</option>
+            ))}
+          </select>
+        </label>
+
+        <label>
+          Devise
+          <input value={currency} onChange={(event) => setCurrency(event.target.value.toUpperCase())} />
+        </label>
+
+        <label>
+          Cours actuel
+          <input
+            inputMode="decimal"
+            value={currentPrice}
+            onChange={(event) => setCurrentPrice(event.target.value)}
+          />
+        </label>
+      </div>
+
+      {error ? <p className="form-error">{error}</p> : null}
+
+      <div className="csv-missing-asset-actions">
+        <small>
+          Un cours à 0 est accepté. Le premier achat importé donnera alors une valeur initiale à la position.
+        </small>
+        <button className="secondary-action" disabled={isCreating} onClick={handleCreate} type="button">
+          {isCreating ? "Création..." : "Créer cet actif"}
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function MissingAssetResolver({
+  candidates,
+  onCreated,
+}: {
+  candidates: CsvImportCandidate[];
+  onCreated: () => Promise<void>;
+}) {
+  const references = buildMissingAssetReferences(candidates);
+
+  if (references.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="csv-missing-assets">
+      <div className="csv-missing-assets-title">
+        <div>
+          <strong>{references.length} actif(s) à créer</strong>
+          <p>
+            Atlas les a reconnus dans le fichier mais ne les connaît pas encore. Vérifie les informations,
+            crée-les, puis les lignes deviendront automatiquement prêtes à importer.
+          </p>
+        </div>
+      </div>
+
+      <div className="csv-missing-assets-list">
+        {references.map((reference) => (
+          <MissingAssetCard key={reference.key} reference={reference} onCreated={onCreated} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function ImportExportPage({
   accounts,
   onImported,
@@ -5161,6 +5386,8 @@ function ImportExportPage({
   const previewRows = importCandidates.slice(0, 12);
   const validRows = importCandidates.filter((row) => row.status === "valid");
   const duplicateRows = importCandidates.filter((row) => row.status === "duplicate");
+  const missingAssetRows = importCandidates.filter((row) => row.status === "asset_missing");
+  const missingAssetReferences = buildMissingAssetReferences(importCandidates);
   const errorRows = importCandidates.filter((row) => row.status === "error");
   const importableRows = includePossibleDuplicates
     ? [...validRows, ...duplicateRows]
@@ -5250,35 +5477,42 @@ function ImportExportPage({
             transaction.transaction_type,
           )
       )
-      .map((transaction) => ({
-        date: transaction.date,
-        type: transaction.transaction_type,
-        compte: transaction.account_name ?? "",
-        compte_source: transaction.from_account_name ?? "",
-        compte_destination: transaction.to_account_name ?? "",
-        ticker:
-          transaction.security_ticker
-          ?? securities.find(
-            (security) => security.id === transaction.security_id
-          )?.ticker
-          ?? "",
-        actif: transaction.security_name ?? "",
-        quantite: transaction.quantity ?? "",
-        prix: transaction.price ?? "",
-        frais: transaction.fees,
-        montant: transaction.amount,
-        note: transaction.note ?? "",
-      }));
+      .map((transaction) => {
+        const security = securities.find((item) => item.id === transaction.security_id);
+
+        return {
+          date: transaction.date,
+          type: transaction.transaction_type,
+          compte: transaction.account_name ?? "",
+          compte_source: transaction.from_account_name ?? "",
+          compte_destination: transaction.to_account_name ?? "",
+          ticker: transaction.security_ticker ?? security?.ticker ?? "",
+          isin: security?.isin ?? "",
+          actif: transaction.security_name ?? security?.name ?? "",
+          classe: security?.asset_class ?? "",
+          devise: security?.currency ?? "",
+          quantite: transaction.quantity ?? "",
+          prix: transaction.price ?? "",
+          frais: transaction.fees,
+          montant: transaction.amount,
+          note: transaction.note ?? "",
+        };
+      });
 
     void runCsvExport("atlas-transactions.csv", rows);
   }
 
   function exportPositions() {
-    const rows = positions.map((position) => ({
+    const rows = positions.map((position) => {
+      const security = securities.find((item) => item.id === position.security_id);
+
+      return {
       actif: position.security_name,
       ticker: position.ticker,
+      isin: security?.isin ?? "",
       compte: position.account_name,
       classe: position.asset_class,
+      devise: security?.currency ?? "",
       quantite: position.quantity,
       pru: position.average_price,
       cours: position.current_price,
@@ -5287,7 +5521,8 @@ function ImportExportPage({
       valeur: position.value,
       performance: position.performance_amount,
       performance_pourcent: position.performance_percent,
-    }));
+      };
+    });
 
     void runCsvExport("atlas-positions.csv", rows);
   }
@@ -5301,7 +5536,10 @@ function ImportExportPage({
         compte_source: "",
         compte_destination: "",
         ticker: "MC.PA",
+        isin: "FR0000121014",
         actif: "LVMH",
+        classe: "Actions",
+        devise: "EUR",
         quantite: "1",
         prix: "488.85",
         frais: "0.99",
@@ -5315,7 +5553,10 @@ function ImportExportPage({
         compte_source: "",
         compte_destination: "PEA",
         ticker: "MC.PA",
+        isin: "FR0000121014",
         actif: "LVMH",
+        classe: "Actions",
+        devise: "EUR",
         quantite: "",
         prix: "",
         frais: "",
@@ -5329,7 +5570,10 @@ function ImportExportPage({
         compte_source: "CTO",
         compte_destination: "",
         ticker: "",
+        isin: "",
         actif: "",
+        classe: "",
+        devise: "EUR",
         quantite: "",
         prix: "",
         frais: "",
@@ -5378,7 +5622,7 @@ function ImportExportPage({
               setImportError(null);
               setImportResult(null);
             }}
-            placeholder="date,type,compte,compte_source,compte_destination,ticker,actif,quantite,prix,frais,montant,note"
+            placeholder="date,type,compte,compte_source,compte_destination,ticker,isin,actif,classe,devise,quantite,prix,frais,montant,note"
             value={csvText}
           />
 
@@ -5408,6 +5652,11 @@ function ImportExportPage({
             </p>
           ) : null}
 
+          <MissingAssetResolver
+            candidates={importCandidates}
+            onCreated={onImported}
+          />
+
           {duplicateRows.length > 0 ? (
             <label className="csv-duplicate-option">
               <input
@@ -5429,13 +5678,16 @@ function ImportExportPage({
             <span>
               Les lignes prêtes sont envoyées en une fois. Atlas crée une sauvegarde
               automatique, puis importe tout ou annule tout si une opération échoue.
+              {missingAssetRows.length > 0
+                ? ` ${missingAssetRows.length} ligne(s) attendent encore la création d'un actif.`
+                : ""}
             </span>
           </div>
 
           <div className="csv-preview-toolbar">
             <div className="csv-preview-status">
               {importCandidates.length > 0
-                ? `${validRows.length} prête(s) · ${duplicateRows.length} doublon(s) · ${errorRows.length} erreur(s)`
+                ? `${validRows.length} prête(s) · ${missingAssetReferences.length} actif(s) à créer · ${duplicateRows.length} doublon(s) · ${errorRows.length} erreur(s)`
                 : "Aucune ligne détectée"}
             </div>
 
@@ -5466,6 +5718,7 @@ function ImportExportPage({
                     <th>Source</th>
                     <th>Destination</th>
                     <th>Ticker</th>
+                    <th>ISIN</th>
                     <th>Quantité</th>
                     <th>Prix</th>
                     <th>Montant</th>
@@ -5481,7 +5734,9 @@ function ImportExportPage({
                             ? "Prêt"
                             : candidate.status === "duplicate"
                               ? "Doublon"
-                              : "Erreur"}
+                              : candidate.status === "asset_missing"
+                                ? "Actif à créer"
+                                : "Erreur"}
                         </span>
                       </td>
                       <td>{candidate.row.date || "—"}</td>
@@ -5490,6 +5745,7 @@ function ImportExportPage({
                       <td>{candidate.row.compte_source || "—"}</td>
                       <td>{candidate.row.compte_destination || "—"}</td>
                       <td>{candidate.row.ticker || "—"}</td>
+                      <td>{candidate.row.isin || "—"}</td>
                       <td>{candidate.row.quantite || "—"}</td>
                       <td>{candidate.row.prix || "—"}</td>
                       <td>{candidate.row.montant || "—"}</td>
@@ -5909,27 +6165,60 @@ function parseCsvNumber(value: string | undefined) {
   return Number.isFinite(number) ? number : null;
 }
 
+
 function findAccountIdByCsvName(accounts: DashboardData["accounts"], value: string | undefined) {
-  const normalized = normalizeCsvValue(value).toLowerCase();
+  const normalized = normalizeCsvLookup(value);
 
   if (!normalized) {
     return null;
   }
 
   return (
-    accounts.find((account) => account.id.toLowerCase() === normalized)?.id ??
-    accounts.find((account) => account.name.toLowerCase() === normalized)?.id ??
-    accounts.find((account) => labelForAccountType(account.account_type).toLowerCase() === normalized)?.id ??
+    accounts.find((account) => normalizeCsvLookup(account.id) === normalized)?.id ??
+    accounts.find((account) => normalizeCsvLookup(account.name) === normalized)?.id ??
+    accounts.find(
+      (account) => normalizeCsvLookup(labelForAccountType(account.account_type)) === normalized,
+    )?.id ??
     null
   );
 }
 
-function findSecurityIdByCsvValue(securities: DbSecurity[], ticker: string | undefined, name: string | undefined) {
-  const normalizedTicker = normalizeCsvValue(ticker).toLowerCase();
-  const normalizedName = normalizeCsvValue(name).toLowerCase();
+
+function normalizeCsvLookup(value: string | undefined) {
+  return normalizeCsvValue(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function findSecurityIdByCsvValue(
+  securities: DbSecurity[],
+  isin: string | undefined,
+  ticker: string | undefined,
+  name: string | undefined,
+) {
+  const normalizedIsin = normalizeCsvValue(isin)
+    .replace(/\s/g, "")
+    .toUpperCase();
+  const normalizedTicker = normalizeCsvLookup(ticker);
+  const normalizedName = normalizeCsvLookup(name);
+
+  if (normalizedIsin) {
+    const byIsin = securities.find(
+      (security) => (security.isin ?? "").replace(/\s/g, "").toUpperCase() === normalizedIsin,
+    );
+
+    if (byIsin) {
+      return byIsin.id;
+    }
+  }
 
   if (normalizedTicker) {
-    const byTicker = securities.find((security) => security.ticker.toLowerCase() === normalizedTicker);
+    const byTicker = securities.find(
+      (security) => normalizeCsvLookup(security.ticker) === normalizedTicker,
+    );
 
     if (byTicker) {
       return byTicker.id;
@@ -5937,7 +6226,9 @@ function findSecurityIdByCsvValue(securities: DbSecurity[], ticker: string | und
   }
 
   if (normalizedName) {
-    const byName = securities.find((security) => security.name.toLowerCase() === normalizedName);
+    const byName = securities.find(
+      (security) => normalizeCsvLookup(security.name) === normalizedName,
+    );
 
     if (byName) {
       return byName.id;
@@ -5946,7 +6237,6 @@ function findSecurityIdByCsvValue(securities: DbSecurity[], ticker: string | und
 
   return null;
 }
-
 
 function normalizeCsvDate(value: string | undefined) {
   const normalized = normalizeCsvValue(value);
@@ -6054,6 +6344,69 @@ function transactionFingerprintFromExisting(transaction: DbTransaction) {
   ].join("|");
 }
 
+
+function normalizeCsvTransactionType(value: string | undefined): TransactionFormType | "" {
+  const normalized = normalizeCsvLookup(value);
+  const aliases: Record<string, TransactionFormType> = {
+    achat: "buy",
+    achats: "buy",
+    buy: "buy",
+    vente: "sell",
+    ventes: "sell",
+    sell: "sell",
+    depot: "deposit",
+    versement: "deposit",
+    apport: "deposit",
+    deposit: "deposit",
+    retrait: "withdrawal",
+    withdrawal: "withdrawal",
+    transfert: "transfer",
+    transfer: "transfer",
+    dividende: "dividend",
+    dividendes: "dividend",
+    coupon: "dividend",
+    dividend: "dividend",
+    frais: "fee",
+    commission: "fee",
+    commissions: "fee",
+    fee: "fee",
+  };
+
+  return aliases[normalized] ?? "";
+}
+
+function normalizeAssetClassInput(value: string | undefined): NewSecurityInput["asset_class"] {
+  const normalized = normalizeCsvLookup(value);
+  const aliases: Record<string, NewSecurityInput["asset_class"]> = {
+    etf: "ETF",
+    action: "Actions",
+    actions: "Actions",
+    equity: "Actions",
+    equities: "Actions",
+    fond: "Fonds",
+    fonds: "Fonds",
+    fund: "Fonds",
+    funds: "Fonds",
+    obligation: "Obligations",
+    obligations: "Obligations",
+    bond: "Obligations",
+    bonds: "Obligations",
+    monetaire: "Monétaire",
+    "money market": "Monétaire",
+    immobilier: "Immobilier",
+    "real estate": "Immobilier",
+    "matieres premieres": "Matières premières",
+    commodities: "Matières premières",
+    crypto: "Crypto",
+    cryptomonnaie: "Crypto",
+    cash: "Cash",
+    autre: "Autre",
+    other: "Autre",
+  };
+
+  return aliases[normalized] ?? "Fonds";
+}
+
 function validateCsvTransactions(
   csvText: string,
   accounts: DashboardData["accounts"],
@@ -6107,8 +6460,18 @@ function validateCsvTransactions(
     };
   }
 
+  function missingAssetCandidate(row: Record<string, string>): CsvImportCandidate {
+    const reference = row.isin || row.ticker || row.actif || "sans référence";
+
+    return {
+      row,
+      status: "asset_missing",
+      message: `Actif à créer ou associer : ${reference}.`,
+    };
+  }
+
   return rows.map((row) => {
-    const type = normalizeCsvValue(row.type).toLowerCase() as TransactionFormType;
+    const type = normalizeCsvTransactionType(row.type);
     const date = normalizeCsvDate(row.date);
     const amount = parseCsvNumber(row.montant);
     const quantity = parseCsvNumber(row.quantite);
@@ -6117,78 +6480,40 @@ function validateCsvTransactions(
     const note = normalizeCsvValue(row.note) || null;
 
     if (!date) {
-      return {
-        row,
-        status: "error",
-        message: "Date manquante.",
-      };
+      return { row, status: "error", message: "Date manquante." };
     }
 
-    if (
-      ![
-        "deposit",
-        "withdrawal",
-        "transfer",
-        "buy",
-        "sell",
-        "dividend",
-        "fee",
-      ].includes(type)
-    ) {
-      return {
-        row,
-        status: "error",
-        message: "Type invalide.",
-      };
+    if (!type) {
+      return { row, status: "error", message: "Type d'opération inconnu." };
     }
 
     if (fees < 0) {
-      return {
-        row,
-        status: "error",
-        message: "Frais négatifs.",
-      };
+      return { row, status: "error", message: "Frais négatifs." };
     }
 
     if (type === "buy" || type === "sell") {
       const accountId = findAccountIdByCsvName(accounts, row.compte);
       const securityId = findSecurityIdByCsvValue(
         securities,
+        row.isin,
         row.ticker,
         row.actif,
       );
 
       if (!accountId) {
-        return {
-          row,
-          status: "error",
-          message: "Compte introuvable.",
-        };
+        return { row, status: "error", message: "Compte introuvable." };
       }
 
       if (!securityId) {
-        return {
-          row,
-          status: "error",
-          message:
-            "Actif introuvable. Créez-le d’abord via la recherche Yahoo.",
-        };
+        return missingAssetCandidate(row);
       }
 
       if (!quantity || quantity <= 0) {
-        return {
-          row,
-          status: "error",
-          message: "Quantité invalide.",
-        };
+        return { row, status: "error", message: "Quantité invalide." };
       }
 
       if (!price || price <= 0) {
-        return {
-          row,
-          status: "error",
-          message: "Prix invalide.",
-        };
+        return { row, status: "error", message: "Prix invalide." };
       }
 
       return finishCandidate(row, {
@@ -6204,11 +6529,7 @@ function validateCsvTransactions(
     }
 
     if (!amount || amount <= 0) {
-      return {
-        row,
-        status: "error",
-        message: "Montant invalide.",
-      };
+      return { row, status: "error", message: "Montant invalide." };
     }
 
     const fromAccountId = findAccountIdByCsvName(
@@ -6223,17 +6544,24 @@ function validateCsvTransactions(
 
     const optionalSecurityId = findSecurityIdByCsvValue(
       securities,
+      row.isin,
       row.ticker,
       row.actif,
     );
 
+    const hasSecurityReference = Boolean(
+      normalizeCsvValue(row.isin)
+      || normalizeCsvValue(row.ticker)
+      || normalizeCsvValue(row.actif)
+    );
+
+    if ((type === "dividend" || type === "fee") && hasSecurityReference && !optionalSecurityId) {
+      return missingAssetCandidate(row);
+    }
+
     if (type === "deposit") {
       if (!toAccountId) {
-        return {
-          row,
-          status: "error",
-          message: "Compte destination introuvable.",
-        };
+        return { row, status: "error", message: "Compte destination introuvable." };
       }
 
       return finishCandidate(row, {
@@ -6248,11 +6576,7 @@ function validateCsvTransactions(
 
     if (type === "withdrawal") {
       if (!fromAccountId) {
-        return {
-          row,
-          status: "error",
-          message: "Compte source introuvable.",
-        };
+        return { row, status: "error", message: "Compte source introuvable." };
       }
 
       return finishCandidate(row, {
@@ -6267,11 +6591,7 @@ function validateCsvTransactions(
 
     if (type === "dividend") {
       if (!toAccountId) {
-        return {
-          row,
-          status: "error",
-          message: "Compte crédité introuvable.",
-        };
+        return { row, status: "error", message: "Compte crédité introuvable." };
       }
 
       return finishCandidate(row, {
@@ -6287,11 +6607,7 @@ function validateCsvTransactions(
 
     if (type === "fee") {
       if (!fromAccountId) {
-        return {
-          row,
-          status: "error",
-          message: "Compte débité introuvable.",
-        };
+        return { row, status: "error", message: "Compte débité introuvable." };
       }
 
       return finishCandidate(row, {
@@ -6306,19 +6622,11 @@ function validateCsvTransactions(
     }
 
     if (!fromAccountId || !toAccountId) {
-      return {
-        row,
-        status: "error",
-        message: "Compte source ou destination introuvable.",
-      };
+      return { row, status: "error", message: "Compte source ou destination introuvable." };
     }
 
     if (fromAccountId === toAccountId) {
-      return {
-        row,
-        status: "error",
-        message: "Source et destination identiques.",
-      };
+      return { row, status: "error", message: "Source et destination identiques." };
     }
 
     return finishCandidate(row, {
@@ -6332,20 +6640,75 @@ function validateCsvTransactions(
   });
 }
 
-const REQUIRED_TRANSACTION_CSV_HEADERS = [
-  "date",
-  "type",
-  "compte",
-  "compte_source",
-  "compte_destination",
-  "ticker",
-  "actif",
-  "quantite",
-  "prix",
-  "frais",
-  "montant",
-  "note",
-];
+
+const REQUIRED_TRANSACTION_CSV_HEADERS = ["date", "type"];
+
+function normalizeCsvHeader(value: string) {
+  const normalized = value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
+  const aliases: Record<string, string> = {
+    date: "date",
+    "date operation": "date",
+    "date d operation": "date",
+    "date ordre": "date",
+    type: "type",
+    "type operation": "type",
+    "type d operation": "type",
+    "nature de l operation": "type",
+    nature: "type",
+    operation: "type",
+    compte: "compte",
+    account: "compte",
+    portefeuille: "compte",
+    enveloppe: "compte",
+    "compte source": "compte_source",
+    source: "compte_source",
+    "compte destination": "compte_destination",
+    destination: "compte_destination",
+    ticker: "ticker",
+    symbole: "ticker",
+    symbol: "ticker",
+    "code valeur": "ticker",
+    isin: "isin",
+    "code isin": "isin",
+    actif: "actif",
+    valeur: "actif",
+    instrument: "actif",
+    titre: "actif",
+    designation: "actif",
+    "nom actif": "actif",
+    classe: "classe",
+    "classe actif": "classe",
+    "type actif": "classe",
+    "asset class": "classe",
+    quantite: "quantite",
+    qte: "quantite",
+    quantity: "quantite",
+    prix: "prix",
+    cours: "prix",
+    "prix unitaire": "prix",
+    price: "prix",
+    frais: "frais",
+    commission: "frais",
+    commissions: "frais",
+    fees: "frais",
+    montant: "montant",
+    "montant net": "montant",
+    amount: "montant",
+    note: "note",
+    commentaire: "note",
+    libelle: "note",
+    devise: "devise",
+    currency: "devise",
+  };
+
+  return aliases[normalized] ?? normalized.replace(/\s+/g, "_");
+}
 
 function getMissingCsvHeaders(text: string) {
   const firstLine = text
@@ -6358,7 +6721,7 @@ function getMissingCsvHeaders(text: string) {
   }
 
   const delimiter = detectCsvDelimiter(firstLine);
-  const headers = splitCsvLine(firstLine, delimiter).map((header) => header.trim().toLowerCase());
+  const headers = splitCsvLine(firstLine, delimiter).map(normalizeCsvHeader);
 
   return REQUIRED_TRANSACTION_CSV_HEADERS.filter((header) => !headers.includes(header));
 }
@@ -6421,6 +6784,7 @@ function splitCsvLine(line: string, delimiter: "," | ";") {
   return values;
 }
 
+
 function parseCsvPreview(text: string) {
   const lines = text
     .replace(/^\uFEFF/, "")
@@ -6433,7 +6797,7 @@ function parseCsvPreview(text: string) {
   }
 
   const delimiter = detectCsvDelimiter(lines[0]);
-  const headers = splitCsvLine(lines[0], delimiter).map((header) => header.trim().toLowerCase());
+  const headers = splitCsvLine(lines[0], delimiter).map(normalizeCsvHeader);
 
   return lines.slice(1).map((line) => {
     const values = splitCsvLine(line, delimiter);
@@ -6450,8 +6814,14 @@ function colorForBucket(bucket: string) {
   const colors: Record<string, string> = {
     ETF: "#7ca7f7",
     Actions: "#9bd29c",
+    Fonds: "#5fb7a8",
+    Obligations: "#e2aa63",
+    Monétaire: "#8fc7d6",
+    Immobilier: "#d98f8f",
+    "Matières premières": "#c7a86b",
     Crypto: "#b79bf2",
     Cash: "#f4d47c",
+    Autre: "#aeb7c4",
   };
 
   return colors[bucket] ?? "#d1d5db";

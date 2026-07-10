@@ -110,7 +110,9 @@ struct DbSecurity {
     id: String,
     name: String,
     ticker: String,
+    isin: Option<String>,
     asset_class: String,
+    currency: String,
     current_price: f64,
 }
 
@@ -302,6 +304,7 @@ struct StoredTransaction {
 struct NewSecurityInput {
     name: String,
     ticker: String,
+    isin: Option<String>,
     asset_class: String,
     currency: String,
     current_price: f64,
@@ -442,12 +445,137 @@ fn ensure_flexible_account_types(connection: &Connection) -> Result<(), String> 
     Ok(())
 }
 
+fn ensure_flexible_security_types(connection: &Connection) -> Result<(), String> {
+    let table_sql = connection
+        .query_row(
+            "
+            SELECT sql
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'securities'
+            ",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("Erreur lecture schéma securities : {error}"))?;
+
+    let Some(table_sql) = table_sql else {
+        return Ok(());
+    };
+
+    let normalized_sql = table_sql.to_lowercase();
+
+    if !(normalized_sql.contains("asset_class") && normalized_sql.contains("check")) {
+        connection
+            .execute_batch("CREATE INDEX IF NOT EXISTS idx_securities_isin ON securities(isin);")
+            .map_err(|error| format!("Erreur création index ISIN : {error}"))?;
+        return Ok(());
+    }
+
+    let database = database_path()?;
+    let backup_directory = database
+        .parent()
+        .ok_or_else(|| "Dossier local de la base introuvable.".to_string())?
+        .join("backups");
+
+    fs::create_dir_all(&backup_directory)
+        .map_err(|error| format!("Impossible de créer le dossier de sauvegarde : {error}"))?;
+
+    connection
+        .execute_batch("PRAGMA wal_checkpoint(FULL);")
+        .map_err(|error| format!("Impossible de préparer la sauvegarde de migration : {error}"))?;
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("Erreur horloge système : {error}"))?
+        .as_millis();
+    let backup_path = backup_directory.join(format!(
+        "atlas-before-security-migration-{timestamp}.sqlite"
+    ));
+
+    fs::copy(&database, &backup_path)
+        .map_err(|error| format!("Impossible de sauvegarder la base avant migration : {error}"))?;
+
+    connection
+        .execute_batch(
+            "
+            PRAGMA foreign_keys = OFF;
+
+            BEGIN IMMEDIATE;
+
+            DROP TABLE IF EXISTS securities_atlas_migrated;
+
+            CREATE TABLE securities_atlas_migrated (
+              id TEXT PRIMARY KEY,
+              name TEXT NOT NULL,
+              ticker TEXT NOT NULL,
+              isin TEXT,
+              asset_class TEXT NOT NULL,
+              sector TEXT,
+              country TEXT,
+              currency TEXT NOT NULL DEFAULT 'EUR',
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            INSERT INTO securities_atlas_migrated (
+              id,
+              name,
+              ticker,
+              isin,
+              asset_class,
+              sector,
+              country,
+              currency,
+              created_at,
+              updated_at
+            )
+            SELECT
+              id,
+              name,
+              ticker,
+              isin,
+              asset_class,
+              sector,
+              country,
+              currency,
+              created_at,
+              updated_at
+            FROM securities;
+
+            DROP TABLE securities;
+
+            ALTER TABLE securities_atlas_migrated
+            RENAME TO securities;
+
+            CREATE INDEX IF NOT EXISTS idx_securities_isin ON securities(isin);
+
+            COMMIT;
+
+            PRAGMA foreign_keys = ON;
+            ",
+        )
+        .map_err(|error| {
+            let _ = connection.execute_batch(
+                "
+                ROLLBACK;
+                PRAGMA foreign_keys = ON;
+                ",
+            );
+
+            format!("Erreur migration des classes d'actifs : {error}")
+        })?;
+
+    Ok(())
+}
+
 fn open_database() -> Result<Connection, String> {
     let path = database_path()?;
     let connection =
         Connection::open(path).map_err(|error| format!("Impossible d'ouvrir SQLite : {error}"))?;
 
     ensure_flexible_account_types(&connection)?;
+    ensure_flexible_security_types(&connection)?;
 
     connection
         .execute_batch("PRAGMA foreign_keys = ON;")
@@ -940,7 +1068,9 @@ fn read_security_by_id(connection: &Connection, security_id: &str) -> Result<DbS
               s.id,
               s.name,
               s.ticker,
+              s.isin,
               s.asset_class,
+              s.currency,
               COALESCE(
                 (
                   SELECT p.close_price
@@ -967,8 +1097,10 @@ fn read_security_by_id(connection: &Connection, security_id: &str) -> Result<DbS
                     id: row.get(0)?,
                     name: row.get(1)?,
                     ticker: row.get(2)?,
-                    asset_class: row.get(3)?,
-                    current_price: row.get(4)?,
+                    isin: row.get(3)?,
+                    asset_class: row.get(4)?,
+                    currency: row.get(5)?,
+                    current_price: row.get(6)?,
                 })
             },
         )
@@ -1537,6 +1669,33 @@ fn get_dashboard_data() -> Result<DashboardData, String> {
         allocation.push(row.map_err(|error| format!("Erreur conversion allocation : {error}"))?);
     }
 
+    for bucket in [
+        "Fonds",
+        "Obligations",
+        "Monétaire",
+        "Immobilier",
+        "Matières premières",
+        "Autre",
+    ] {
+        let value = *allocation_values.get(bucket).unwrap_or(&0.0);
+
+        if value > 0.000001 && !allocation.iter().any(|row| row.bucket == bucket) {
+            let actual_percent = if total > 0.0 {
+                (value / total) * 100.0
+            } else {
+                0.0
+            };
+
+            allocation.push(DashboardAllocation {
+                bucket: bucket.to_string(),
+                target_percent: 0.0,
+                value,
+                actual_percent,
+                difference_percent: actual_percent,
+            });
+        }
+    }
+
     let mut positions_by_account = HashMap::<String, f64>::new();
 
     for position in &raw_positions {
@@ -1695,7 +1854,9 @@ fn get_securities() -> Result<Vec<DbSecurity>, String> {
               s.id,
               s.name,
               s.ticker,
+              s.isin,
               s.asset_class,
+              s.currency,
               COALESCE(
                 (
                   SELECT p.close_price
@@ -1718,8 +1879,14 @@ fn get_securities() -> Result<Vec<DbSecurity>, String> {
               CASE s.asset_class
                 WHEN 'ETF' THEN 1
                 WHEN 'Actions' THEN 2
-                WHEN 'Crypto' THEN 3
-                WHEN 'Cash' THEN 4
+                WHEN 'Fonds' THEN 3
+                WHEN 'Obligations' THEN 4
+                WHEN 'Monétaire' THEN 5
+                WHEN 'Immobilier' THEN 6
+                WHEN 'Matières premières' THEN 7
+                WHEN 'Crypto' THEN 8
+                WHEN 'Cash' THEN 9
+                WHEN 'Autre' THEN 10
                 ELSE 99
               END,
               s.name
@@ -1733,8 +1900,10 @@ fn get_securities() -> Result<Vec<DbSecurity>, String> {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 ticker: row.get(2)?,
-                asset_class: row.get(3)?,
-                current_price: row.get(4)?,
+                isin: row.get(3)?,
+                asset_class: row.get(4)?,
+                currency: row.get(5)?,
+                current_price: row.get(6)?,
             })
         })
         .map_err(|error| format!("Erreur lecture securities : {error}"))?;
@@ -1750,9 +1919,25 @@ fn get_securities() -> Result<Vec<DbSecurity>, String> {
 
 #[tauri::command]
 fn create_security(input: NewSecurityInput) -> Result<DbSecurity, String> {
-    let name = input.name.trim();
-    let ticker = input.ticker.trim().to_uppercase();
-    let asset_class = input.asset_class.trim();
+    let name = input.name.trim().to_string();
+    let normalized_isin = input
+        .isin
+        .as_deref()
+        .map(|value| {
+            value
+                .chars()
+                .filter(|character| !character.is_whitespace())
+                .collect::<String>()
+        })
+        .map(|value| value.to_uppercase())
+        .filter(|value| !value.is_empty());
+    let ticker_input = input.ticker.trim().to_uppercase();
+    let ticker = if ticker_input.is_empty() {
+        normalized_isin.clone().unwrap_or_default()
+    } else {
+        ticker_input
+    };
+    let asset_class = input.asset_class.trim().to_string();
     let currency = input.currency.trim().to_uppercase();
 
     if name.is_empty() {
@@ -1760,19 +1945,45 @@ fn create_security(input: NewSecurityInput) -> Result<DbSecurity, String> {
     }
 
     if ticker.is_empty() {
-        return Err("Le ticker est obligatoire.".to_string());
+        return Err("Indique un ticker, un code interne ou un ISIN.".to_string());
     }
 
-    if !matches!(asset_class, "ETF" | "Actions" | "Crypto" | "Cash") {
-        return Err("Classe d'actif invalide. Choisis ETF, Actions, Crypto ou Cash.".to_string());
+    if let Some(isin) = normalized_isin.as_deref() {
+        if isin.len() != 12
+            || !isin
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric())
+        {
+            return Err("L'ISIN doit contenir 12 lettres ou chiffres.".to_string());
+        }
     }
 
-    if currency.is_empty() {
-        return Err("La devise est obligatoire.".to_string());
+    if !matches!(
+        asset_class.as_str(),
+        "ETF"
+            | "Actions"
+            | "Fonds"
+            | "Obligations"
+            | "Monétaire"
+            | "Immobilier"
+            | "Matières premières"
+            | "Crypto"
+            | "Cash"
+            | "Autre"
+    ) {
+        return Err("Classe d'actif invalide.".to_string());
     }
 
-    if input.current_price <= 0.0 {
-        return Err("Le cours doit être supérieur à 0.".to_string());
+    if currency.len() != 3
+        || !currency
+            .chars()
+            .all(|character| character.is_ascii_alphabetic())
+    {
+        return Err("La devise doit contenir trois lettres, par exemple EUR.".to_string());
+    }
+
+    if !input.current_price.is_finite() || input.current_price < 0.0 {
+        return Err("Le cours doit être positif ou nul.".to_string());
     }
 
     let mut connection = open_database()?;
@@ -1784,16 +1995,17 @@ fn create_security(input: NewSecurityInput) -> Result<DbSecurity, String> {
             FROM securities
             WHERE lower(ticker) = lower(?1)
                OR lower(name) = lower(?2)
+               OR (?3 IS NOT NULL AND lower(isin) = lower(?3))
             LIMIT 1
             ",
-            params![ticker, name],
+            params![ticker, name, normalized_isin.as_deref()],
             |row| row.get::<_, String>(0),
         )
         .optional()
         .map_err(|error| format!("Erreur recherche doublon actif : {error}"))?;
 
     if duplicate.is_some() {
-        return Err("Un actif avec ce nom ou ce ticker existe déjà.".to_string());
+        return Err("Un actif avec ce nom, ce ticker ou cet ISIN existe déjà.".to_string());
     }
 
     let now = SystemTime::now()
@@ -1831,27 +2043,36 @@ fn create_security(input: NewSecurityInput) -> Result<DbSecurity, String> {
               country,
               currency
             )
-            VALUES (?1, ?2, ?3, NULL, ?4, NULL, NULL, ?5)
+            VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, ?6)
             ",
-            params![id, name, ticker, asset_class, currency],
+            params![
+                id,
+                name,
+                ticker,
+                normalized_isin.as_deref(),
+                asset_class,
+                currency
+            ],
         )
         .map_err(|error| format!("Erreur création actif : {error}"))?;
 
-    sqlite_transaction
-        .execute(
-            "
-            INSERT INTO prices (
-              security_id,
-              date,
-              close_price,
-              currency,
-              source
+    if input.current_price > 0.0 {
+        sqlite_transaction
+            .execute(
+                "
+                INSERT INTO prices (
+                  security_id,
+                  date,
+                  close_price,
+                  currency,
+                  source
+                )
+                VALUES (?1, date('now'), ?2, ?3, 'manual')
+                ",
+                params![id, input.current_price, currency],
             )
-            VALUES (?1, date('now'), ?2, ?3, 'manual')
-            ",
-            params![id, input.current_price, currency],
-        )
-        .map_err(|error| format!("Erreur création cours initial : {error}"))?;
+            .map_err(|error| format!("Erreur création cours initial : {error}"))?;
+    }
 
     sqlite_transaction
         .commit()
@@ -1859,9 +2080,11 @@ fn create_security(input: NewSecurityInput) -> Result<DbSecurity, String> {
 
     Ok(DbSecurity {
         id,
-        name: name.to_string(),
+        name,
         ticker,
-        asset_class: asset_class.to_string(),
+        isin: normalized_isin,
+        asset_class,
+        currency,
         current_price: input.current_price,
     })
 }

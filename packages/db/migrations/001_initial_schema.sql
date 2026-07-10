@@ -20,9 +20,7 @@ CREATE TABLE IF NOT EXISTS securities (
   name TEXT NOT NULL,
   ticker TEXT NOT NULL,
   isin TEXT,
-  asset_class TEXT NOT NULL CHECK (
-    asset_class IN ('ETF', 'Actions', 'Crypto', 'Cash')
-  ),
+  asset_class TEXT NOT NULL,
   sector TEXT,
   country TEXT,
   currency TEXT NOT NULL DEFAULT 'EUR',
@@ -80,9 +78,7 @@ CREATE TABLE IF NOT EXISTS prices (
 
 CREATE TABLE IF NOT EXISTS allocation_targets (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  bucket TEXT NOT NULL CHECK (
-    bucket IN ('ETF', 'Actions', 'Crypto', 'Cash')
-  ),
+  bucket TEXT NOT NULL,
   target_percent REAL NOT NULL,
   min_percent REAL,
   max_percent REAL,
@@ -148,6 +144,7 @@ CREATE TABLE IF NOT EXISTS price_update_status (
 
 CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
 CREATE INDEX IF NOT EXISTS idx_transactions_type ON transactions(type);
+CREATE INDEX IF NOT EXISTS idx_securities_isin ON securities(isin);
 CREATE INDEX IF NOT EXISTS idx_positions_account ON positions(account_id);
 CREATE INDEX IF NOT EXISTS idx_positions_security ON positions(security_id);
 CREATE INDEX IF NOT EXISTS idx_prices_security_date ON prices(security_id, date);
