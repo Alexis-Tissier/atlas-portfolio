@@ -5358,6 +5358,400 @@ function MissingAssetResolver({
   );
 }
 
+
+type ExternalCsvField =
+  | "date"
+  | "type"
+  | "compte"
+  | "compte_source"
+  | "compte_destination"
+  | "isin"
+  | "ticker"
+  | "actif"
+  | "classe"
+  | "devise"
+  | "quantite"
+  | "prix"
+  | "frais"
+  | "montant"
+  | "note";
+
+type ExternalCsvColumnMapping = Record<ExternalCsvField, string>;
+
+const EXTERNAL_CSV_FIELDS: Array<{
+  key: ExternalCsvField;
+  label: string;
+  required: boolean;
+}> = [
+  { key: "date", label: "Date", required: true },
+  { key: "type", label: "Type d’opération", required: true },
+  { key: "compte", label: "Compte", required: false },
+  { key: "compte_source", label: "Compte source", required: false },
+  { key: "compte_destination", label: "Compte destination", required: false },
+  { key: "isin", label: "ISIN", required: false },
+  { key: "ticker", label: "Ticker / symbole", required: false },
+  { key: "actif", label: "Nom de l’actif", required: false },
+  { key: "classe", label: "Classe d’actif", required: false },
+  { key: "devise", label: "Devise", required: false },
+  { key: "quantite", label: "Quantité", required: false },
+  { key: "prix", label: "Prix / cours", required: false },
+  { key: "frais", label: "Frais", required: false },
+  { key: "montant", label: "Montant", required: false },
+  { key: "note", label: "Note / libellé", required: false },
+];
+
+const EXTERNAL_CSV_HEADER_ALIASES: Record<ExternalCsvField, string[]> = {
+  date: [
+    "date", "date operation", "date de l operation", "date d operation",
+    "date execution", "date de valeur", "date comptable",
+  ],
+  type: [
+    "type", "type operation", "nature", "operation",
+    "nature operation", "sens", "mouvement",
+  ],
+  compte: [
+    "compte", "nom compte", "account", "portefeuille", "enveloppe",
+  ],
+  compte_source: [
+    "compte source", "source", "from account", "compte debite",
+  ],
+  compte_destination: [
+    "compte destination", "destination", "to account", "compte credite",
+  ],
+  isin: [
+    "isin", "code isin", "code valeur", "identifiant isin",
+  ],
+  ticker: [
+    "ticker", "symbole", "symbol", "code mnémonique", "code mnemonique",
+  ],
+  actif: [
+    "actif", "valeur", "nom valeur", "instrument", "titre",
+    "produit", "designation", "libelle valeur",
+  ],
+  classe: [
+    "classe", "classe actif", "classe d actif", "categorie actif",
+    "type actif", "categorie",
+  ],
+  devise: [
+    "devise", "currency", "monnaie",
+  ],
+  quantite: [
+    "quantite", "quantité", "qte", "nombre", "units",
+  ],
+  prix: [
+    "prix", "cours", "prix execution", "prix d execution",
+    "valeur unitaire", "price",
+  ],
+  frais: [
+    "frais", "commission", "commissions", "courtage", "fees",
+  ],
+  montant: [
+    "montant", "montant net", "montant brut", "net", "total", "amount",
+  ],
+  note: [
+    "note", "commentaire", "description", "libelle",
+    "libelle operation", "memo",
+  ],
+};
+
+function normalizeExternalCsvHeader(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[_/\\.-]+/g, " ")
+    .replace(/[’']/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function externalCsvHeaders(text: string) {
+  const firstLine = text
+    .replace(/^\uFEFF/, "")
+    .split(/\r?\n/)
+    .find((line) => line.trim());
+
+  if (!firstLine) {
+    return [];
+  }
+
+  const delimiter = detectCsvDelimiter(firstLine);
+  return splitCsvLine(firstLine, delimiter).map((header) => header.trim());
+}
+
+function emptyExternalCsvMapping(): ExternalCsvColumnMapping {
+  return EXTERNAL_CSV_FIELDS.reduce((mapping, field) => {
+    mapping[field.key] = "";
+    return mapping;
+  }, {} as ExternalCsvColumnMapping);
+}
+
+function guessExternalCsvMapping(headers: string[]): ExternalCsvColumnMapping {
+  const mapping = emptyExternalCsvMapping();
+  const normalizedHeaders = headers.map((header) => ({
+    original: header,
+    normalized: normalizeExternalCsvHeader(header),
+  }));
+
+  for (const field of EXTERNAL_CSV_FIELDS) {
+    const aliases = [field.key, ...EXTERNAL_CSV_HEADER_ALIASES[field.key]]
+      .map(normalizeExternalCsvHeader);
+
+    const exactMatch = normalizedHeaders.find((header) =>
+      aliases.includes(header.normalized)
+    );
+
+    if (exactMatch) {
+      mapping[field.key] = exactMatch.original;
+      continue;
+    }
+
+    const partialMatch = normalizedHeaders.find((header) =>
+      aliases.some(
+        (alias) =>
+          alias.length >= 5
+          && (
+            header.normalized.includes(alias)
+            || alias.includes(header.normalized)
+          )
+      )
+    );
+
+    if (partialMatch) {
+      mapping[field.key] = partialMatch.original;
+    }
+  }
+
+  return mapping;
+}
+
+function externalCsvMappingKey(headers: string[]) {
+  return `atlas.csv.mapping.${headers
+    .map(normalizeExternalCsvHeader)
+    .sort()
+    .join("|")}`;
+}
+
+function readSavedExternalCsvMapping(
+  headers: string[],
+): ExternalCsvColumnMapping | null {
+  if (headers.length === 0) {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(externalCsvMappingKey(headers));
+
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as Partial<ExternalCsvColumnMapping>;
+    const mapping = emptyExternalCsvMapping();
+
+    for (const field of EXTERNAL_CSV_FIELDS) {
+      const sourceHeader = parsed[field.key];
+
+      if (sourceHeader && headers.includes(sourceHeader)) {
+        mapping[field.key] = sourceHeader;
+      }
+    }
+
+    return mapping;
+  } catch {
+    return null;
+  }
+}
+
+function saveExternalCsvMapping(
+  headers: string[],
+  mapping: ExternalCsvColumnMapping,
+) {
+  if (headers.length === 0) {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(
+      externalCsvMappingKey(headers),
+      JSON.stringify(mapping),
+    );
+  } catch {
+    // Le mapping reste utilisable pendant la session.
+  }
+}
+
+function normalizeExternalTransactionType(value: string) {
+  const normalized = normalizeExternalCsvHeader(value);
+
+  const aliases: Record<string, string> = {
+    achat: "buy",
+    acheter: "buy",
+    buy: "buy",
+    acquisition: "buy",
+    souscription: "buy",
+    vente: "sell",
+    vendre: "sell",
+    sell: "sell",
+    cession: "sell",
+    depot: "deposit",
+    versement: "deposit",
+    apport: "deposit",
+    deposit: "deposit",
+    retrait: "withdrawal",
+    withdrawal: "withdrawal",
+    transfert: "transfer",
+    virement: "transfer",
+    transfer: "transfer",
+    dividende: "dividend",
+    dividendes: "dividend",
+    coupon: "dividend",
+    distribution: "dividend",
+    dividend: "dividend",
+    frais: "fee",
+    commission: "fee",
+    commissions: "fee",
+    fee: "fee",
+  };
+
+  return aliases[normalized] ?? value.trim().toLowerCase();
+}
+
+function normalizeExternalAssetClass(value: string) {
+  const normalized = normalizeExternalCsvHeader(value);
+
+  const aliases: Record<string, string> = {
+    etf: "ETF",
+    tracker: "ETF",
+    action: "Actions",
+    actions: "Actions",
+    equity: "Actions",
+    fonds: "Fonds",
+    fund: "Fonds",
+    opcvm: "Fonds",
+    sicav: "Fonds",
+    fcpe: "Fonds",
+    obligation: "Obligations",
+    obligations: "Obligations",
+    bond: "Obligations",
+    monetaire: "Monétaire",
+    monetary: "Monétaire",
+    immobilier: "Immobilier",
+    "immobilier papier": "Immobilier",
+    scpi: "Immobilier",
+    "matieres premieres": "Matières premières",
+    commodity: "Matières premières",
+    crypto: "Crypto",
+    cryptomonnaie: "Crypto",
+    cash: "Cash",
+    liquidites: "Cash",
+    autre: "Autre",
+    other: "Autre",
+  };
+
+  return aliases[normalized] ?? value.trim();
+}
+
+function normalizeExternalCsvNumber(value: string) {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return "";
+  }
+
+  const isNegativeParenthesis =
+    trimmed.startsWith("(") && trimmed.endsWith(")");
+
+  let normalized = trimmed
+    .replace(/\u00a0/g, " ")
+    .replace(/\s/g, "")
+    .replace(/[€$£]/g, "")
+    .replace(/\b(EUR|USD|GBP|CHF)\b/gi, "")
+    .replace(/%/g, "")
+    .replace(/[()]/g, "");
+
+  if (normalized.includes(",") && normalized.includes(".")) {
+    if (normalized.lastIndexOf(",") > normalized.lastIndexOf(".")) {
+      normalized = normalized.replace(/\./g, "").replace(",", ".");
+    } else {
+      normalized = normalized.replace(/,/g, "");
+    }
+  } else {
+    normalized = normalized.replace(",", ".");
+  }
+
+  return isNegativeParenthesis ? `-${normalized}` : normalized;
+}
+
+function buildMappedAtlasCsv(
+  sourceText: string,
+  mapping: ExternalCsvColumnMapping,
+  defaultAccountName: string,
+) {
+  const lines = sourceText
+    .replace(/^\uFEFF/, "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length < 2) {
+    return "";
+  }
+
+  const delimiter = detectCsvDelimiter(lines[0]);
+  const sourceHeaders = splitCsvLine(lines[0], delimiter).map((header) =>
+    header.trim()
+  );
+  const canonicalHeaders = EXTERNAL_CSV_FIELDS.map((field) => field.key);
+
+  const rows = lines.slice(1).map((line) => {
+    const values = splitCsvLine(line, delimiter);
+    const sourceRow = sourceHeaders.reduce<Record<string, string>>(
+      (row, header, index) => {
+        row[header] = values[index] ?? "";
+        return row;
+      },
+      {},
+    );
+
+    const mapped = canonicalHeaders.reduce<Record<string, string>>(
+      (row, field) => {
+        const sourceHeader = mapping[field];
+        row[field] = sourceHeader ? sourceRow[sourceHeader] ?? "" : "";
+        return row;
+      },
+      {},
+    );
+
+    mapped.date = mapped.date.trim();
+    mapped.type = normalizeExternalTransactionType(mapped.type);
+    mapped.classe = normalizeExternalAssetClass(mapped.classe);
+    mapped.devise = mapped.devise.trim().toUpperCase();
+
+    for (const numericField of [
+      "quantite",
+      "prix",
+      "frais",
+      "montant",
+    ] as const) {
+      mapped[numericField] = normalizeExternalCsvNumber(mapped[numericField]);
+    }
+
+    if (!mapped.compte && defaultAccountName) {
+      mapped.compte = defaultAccountName;
+    }
+
+    return mapped;
+  });
+
+  return [
+    canonicalHeaders.join(","),
+    ...rows.map((row) =>
+      canonicalHeaders.map((header) => csvEscape(row[header])).join(",")
+    ),
+  ].join("\n");
+}
+
 function ImportExportPage({
   accounts,
   onImported,
@@ -5379,9 +5773,64 @@ function ImportExportPage({
   const [exportResult, setExportResult] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
 
-  const missingCsvHeaders = getMissingCsvHeaders(csvText);
+  const [csvColumnMapping, setCsvColumnMapping] = useState<ExternalCsvColumnMapping>(() => emptyExternalCsvMapping());
+
+  const [csvMappingSignature, setCsvMappingSignature] = useState("");
+
+  const [isCsvMappingOpen, setIsCsvMappingOpen] = useState(false);
+
+  const [defaultImportAccountId, setDefaultImportAccountId] = useState("");
+
+  const sourceCsvHeaders = externalCsvHeaders(csvText);
+  const defaultImportAccountName =
+    accounts.find((account) => account.id === defaultImportAccountId)?.name ?? "";
+
+  useEffect(() => {
+    if (sourceCsvHeaders.length === 0) {
+      setCsvColumnMapping(emptyExternalCsvMapping());
+      setCsvMappingSignature("");
+      return;
+    }
+
+    const signature = sourceCsvHeaders
+      .map(normalizeExternalCsvHeader)
+      .join("|");
+
+    if (signature === csvMappingSignature) {
+      return;
+    }
+
+    const savedMapping = readSavedExternalCsvMapping(sourceCsvHeaders);
+    setCsvColumnMapping(
+      savedMapping ?? guessExternalCsvMapping(sourceCsvHeaders)
+    );
+    setCsvMappingSignature(signature);
+  }, [csvText, csvMappingSignature]);
+
+  useEffect(() => {
+    if (sourceCsvHeaders.length === 0) {
+      return;
+    }
+
+    saveExternalCsvMapping(sourceCsvHeaders, csvColumnMapping);
+  }, [csvColumnMapping, csvMappingSignature]);
+
+  const mappedCsvText = csvText
+    ? buildMappedAtlasCsv(
+        csvText,
+        csvColumnMapping,
+        defaultImportAccountName,
+      )
+    : "";
+
+  const missingCsvHeaders = getMissingCsvHeaders(mappedCsvText);
   const importCandidates = missingCsvHeaders.length === 0
-    ? validateCsvTransactions(csvText, accounts, securities, transactions)
+    ? validateCsvTransactions(
+        mappedCsvText,
+        accounts,
+        securities,
+        transactions,
+      )
     : [];
   const previewRows = importCandidates.slice(0, 12);
   const validRows = importCandidates.filter((row) => row.status === "valid");
@@ -5460,6 +5909,9 @@ function ImportExportPage({
 
       setCsvText("");
       setIncludePossibleDuplicates(false);
+      setCsvColumnMapping(emptyExternalCsvMapping());
+      setCsvMappingSignature("");
+      setIsCsvMappingOpen(false);
     } catch (error) {
       setImportError(
         `Import annulé : aucune ligne n'a été enregistrée. ${String(error)}`
@@ -5639,6 +6091,9 @@ function ImportExportPage({
                 setCsvText("");
                 setImportError(null);
                 setImportResult(null);
+                setCsvColumnMapping(emptyExternalCsvMapping());
+                setCsvMappingSignature("");
+                setIsCsvMappingOpen(false);
               }}
               type="button"
             >
@@ -5646,9 +6101,154 @@ function ImportExportPage({
             </button>
           </div>
 
+          {csvText && sourceCsvHeaders.length > 0 ? (
+            <div className="csv-mapping-summary">
+              <div>
+                <strong>Format du fichier détecté</strong>
+                <span>
+                  {sourceCsvHeaders.length} colonne(s) source ·{" "}
+                  {
+                    EXTERNAL_CSV_FIELDS.filter(
+                      (field) => csvColumnMapping[field.key]
+                    ).length
+                  } correspondance(s)
+                </span>
+              </div>
+
+              <div className="csv-mapping-summary-actions">
+                <label>
+                  Compte par défaut
+                  <select
+                    onChange={(event) =>
+                      setDefaultImportAccountId(event.target.value)
+                    }
+                    value={defaultImportAccountId}
+                  >
+                    <option value="">Aucun</option>
+                    {accounts.map((account) => (
+                      <option key={account.id} value={account.id}>
+                        {account.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <button
+                  className="secondary-action"
+                  onClick={() =>
+                    setIsCsvMappingOpen((current) => !current)
+                  }
+                  type="button"
+                >
+                  {isCsvMappingOpen
+                    ? "Masquer les correspondances"
+                    : "Vérifier les colonnes"}
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {isCsvMappingOpen && sourceCsvHeaders.length > 0 ? (
+            <div className="csv-column-mapping-card">
+              <div className="csv-column-mapping-header">
+                <div>
+                  <h3>Correspondance des colonnes</h3>
+                  <p>
+                    À gauche, le champ attendu par Atlas. À droite,
+                    la colonne de ton fichier. Cette correspondance sera
+                    mémorisée pour les prochains fichiers ayant les mêmes
+                    en-têtes.
+                  </p>
+                </div>
+
+                <div className="csv-column-mapping-actions">
+                  <button
+                    className="secondary-action"
+                    onClick={() =>
+                      setCsvColumnMapping(
+                        guessExternalCsvMapping(sourceCsvHeaders)
+                      )
+                    }
+                    type="button"
+                  >
+                    Détection automatique
+                  </button>
+
+                  <button
+                    className="secondary-action"
+                    disabled={!mappedCsvText}
+                    onClick={() =>
+                      void runCsvExport(
+                        "atlas-csv-converti.csv",
+                        parseCsvPreview(mappedCsvText),
+                      )
+                    }
+                    type="button"
+                  >
+                    Exporter le CSV converti
+                  </button>
+                </div>
+              </div>
+
+              <div className="csv-column-mapping-grid">
+                {EXTERNAL_CSV_FIELDS.map((field) => (
+                  <label key={field.key}>
+                    <span>
+                      {field.label}
+                      {field.required ? <em>obligatoire</em> : null}
+                    </span>
+
+                    <select
+                      onChange={(event) =>
+                        setCsvColumnMapping((current) => ({
+                          ...current,
+                          [field.key]: event.target.value,
+                        }))
+                      }
+                      value={csvColumnMapping[field.key]}
+                    >
+                      <option value="">Non utilisé</option>
+                      {sourceCsvHeaders.map((header) => (
+                        <option key={header} value={header}>
+                          {header}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ))}
+              </div>
+
+              <div className="csv-column-preview">
+                <strong>Aperçu après conversion</strong>
+                <div>
+                  {parseCsvPreview(mappedCsvText)
+                    .slice(0, 3)
+                    .map((row, index) => (
+                      <span key={index}>
+                        {row.date || "Date ?"}
+                        {" · "}
+                        {row.type || "Type ?"}
+                        {" · "}
+                        {row.compte || defaultImportAccountName || "Compte ?"}
+                        {" · "}
+                        {row.actif || row.isin || row.ticker || "Sans actif"}
+                        {" · "}
+                        {row.montant || (
+                          row.quantite && row.prix
+                            ? `${row.quantite} × ${row.prix}`
+                            : "Montant ?"
+                        )}
+                      </span>
+                    ))}
+                </div>
+              </div>
+            </div>
+          ) : null}
+
           {missingCsvHeaders.length > 0 ? (
             <p className="form-error">
-              Colonnes manquantes : {missingCsvHeaders.join(", ")}
+              Champs obligatoires non associés : {missingCsvHeaders.join(", ")}.
+              Ouvre « Vérifier les colonnes » pour choisir les bonnes colonnes source.
             </p>
           ) : null}
 
