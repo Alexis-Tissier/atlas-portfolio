@@ -86,7 +86,7 @@ export type DbTransaction = {
 
 export type UpdateTransactionInput = {
   id: string;
-  transaction_type: "deposit" | "withdrawal" | "transfer" | "buy" | "sell";
+  transaction_type: "deposit" | "withdrawal" | "transfer" | "buy" | "sell" | "dividend" | "fee";
   date: string;
   account_id?: string | null;
   from_account_id?: string | null;
@@ -115,6 +115,20 @@ export type OnlineAssetSearchResult = {
   currency: string;
   source: string;
   match_score: number;
+};
+
+export type OnlineAssetHistoryPoint = {
+  timestamp: number;
+  close: number;
+};
+
+export type OnlineAssetHistory = {
+  symbol: string;
+  currency: string;
+  source: string;
+  used_symbol: string;
+  current_price: number;
+  points: OnlineAssetHistoryPoint[];
 };
 
 export type OnlineAssetQuote = {
@@ -179,10 +193,11 @@ export type PositionPageRow = {
 };
 
 export type NewCashTransaction = {
-  transaction_type: "deposit" | "withdrawal" | "transfer";
+  transaction_type: "deposit" | "withdrawal" | "transfer" | "dividend" | "fee";
   date: string;
   from_account_id?: string | null;
   to_account_id?: string | null;
+  security_id?: string | null;
   amount: number;
   note?: string | null;
 };
@@ -244,6 +259,10 @@ export async function createSecurity(input: NewSecurityInput) {
 
 export async function searchOnlineAssets(query: string) {
   return invoke<OnlineAssetSearchResult[]>("search_online_assets", { query });
+}
+
+export async function lookupOnlineAssetHistory(symbol: string, period: string) {
+  return invoke<OnlineAssetHistory>("lookup_online_asset_history", { symbol, period });
 }
 
 export async function lookupOnlineAssetQuote(symbol: string) {

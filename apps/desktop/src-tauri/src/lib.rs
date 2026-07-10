@@ -120,6 +120,22 @@ struct OnlineAssetSearchResult {
 }
 
 #[derive(Debug, Serialize)]
+struct OnlineAssetHistoryPoint {
+    timestamp: i64,
+    close: f64,
+}
+
+#[derive(Debug, Serialize)]
+struct OnlineAssetHistory {
+    symbol: String,
+    currency: String,
+    source: String,
+    used_symbol: String,
+    current_price: f64,
+    points: Vec<OnlineAssetHistoryPoint>,
+}
+
+#[derive(Debug, Serialize)]
 struct OnlineAssetQuote {
     symbol: String,
     price: f64,
@@ -204,6 +220,7 @@ struct NewCashTransaction {
     date: String,
     from_account_id: Option<String>,
     to_account_id: Option<String>,
+    security_id: Option<String>,
     amount: f64,
     note: Option<String>,
 }
@@ -412,6 +429,127 @@ fn fetch_latest_price_from_alpha_vantage(symbol: &str) -> Result<f64, String> {
     price_text
         .parse::<f64>()
         .map_err(|error| format!("Prix Alpha Vantage invalide ({price_text}) : {error}"))
+}
+
+fn yahoo_history_range(period: &str) -> (&'static str, &'static str) {
+    match period.trim().to_uppercase().as_str() {
+        "1M" => ("1mo", "1d"),
+        "6M" => ("6mo", "1d"),
+        "1A" | "1Y" => ("1y", "1d"),
+        "5A" | "5Y" => ("5y", "1wk"),
+        "MAX" | "TOUS" => ("max", "1mo"),
+        _ => ("6mo", "1d"),
+    }
+}
+
+fn fetch_history_from_yahoo_symbol(
+    symbol: &str,
+    period: &str,
+) -> Result<OnlineAssetHistory, String> {
+    let symbol = symbol.trim();
+
+    if symbol.is_empty() {
+        return Err("Symbole Yahoo vide.".to_string());
+    }
+
+    let (range, interval) = yahoo_history_range(period);
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(12))
+        .build()
+        .map_err(|error| format!("Impossible de créer le client HTTP Yahoo : {error}"))?;
+
+    let json = client
+        .get(format!(
+            "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+        ))
+        .header(
+            "User-Agent",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/126 Safari/537.36",
+        )
+        .header("Accept", "application/json,text/plain,*/*")
+        .query(&[("range", range), ("interval", interval)])
+        .send()
+        .map_err(|error| format!("Erreur réseau Yahoo Finance : {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Erreur HTTP Yahoo Finance : {error}"))?
+        .json::<Value>()
+        .map_err(|error| format!("Réponse Yahoo Finance illisible : {error}"))?;
+
+    let chart = json
+        .get("chart")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "Yahoo Finance n'a pas renvoyé de bloc chart.".to_string())?;
+
+    if let Some(error_value) = chart.get("error") {
+        if !error_value.is_null() {
+            return Err(format!("Yahoo Finance : {error_value}"));
+        }
+    }
+
+    let result = chart
+        .get("result")
+        .and_then(Value::as_array)
+        .and_then(|items| items.first())
+        .ok_or_else(|| "Yahoo Finance n'a pas renvoyé de résultat exploitable.".to_string())?;
+
+    let currency = result
+        .get("meta")
+        .and_then(|meta| meta.get("currency"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+
+    let timestamps = result
+        .get("timestamp")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "Yahoo Finance n'a pas renvoyé de dates historiques.".to_string())?;
+
+    let close_values = result
+        .get("indicators")
+        .and_then(|indicators| indicators.get("quote"))
+        .and_then(Value::as_array)
+        .and_then(|quotes| quotes.first())
+        .and_then(|quote| quote.get("close"))
+        .and_then(Value::as_array)
+        .ok_or_else(|| "Yahoo Finance n'a pas renvoyé de cours historiques.".to_string())?;
+
+    let mut points = Vec::new();
+
+    for (timestamp_value, close_value) in timestamps.iter().zip(close_values.iter()) {
+        let Some(timestamp) = timestamp_value.as_i64() else {
+            continue;
+        };
+
+        let Some(close) = close_value.as_f64() else {
+            continue;
+        };
+
+        if close > 0.0 {
+            points.push(OnlineAssetHistoryPoint { timestamp, close });
+        }
+    }
+
+    if points.is_empty() {
+        return Err("Yahoo Finance n'a renvoyé aucun point historique exploitable.".to_string());
+    }
+
+    let fallback_price = points.last().map(|point| point.close).unwrap_or(0.0);
+    let current_price = result
+        .get("meta")
+        .and_then(|meta| meta.get("regularMarketPrice"))
+        .and_then(Value::as_f64)
+        .filter(|value| *value > 0.0)
+        .unwrap_or(fallback_price);
+
+    Ok(OnlineAssetHistory {
+        symbol: symbol.to_string(),
+        currency,
+        source: "yahoo".to_string(),
+        used_symbol: symbol.to_string(),
+        current_price,
+        points,
+    })
 }
 
 fn fetch_latest_price_from_yahoo(symbol: &str) -> Result<f64, String> {
@@ -1545,6 +1683,35 @@ fn lookup_online_asset_quote(symbol: String) -> Result<OnlineAssetQuote, String>
 }
 
 #[tauri::command]
+fn lookup_online_asset_history(
+    symbol: String,
+    period: String,
+) -> Result<OnlineAssetHistory, String> {
+    let storage_symbol = preferred_storage_symbol(symbol.trim());
+
+    if storage_symbol.len() < 2 {
+        return Err("Tape au moins 2 caractères pour ouvrir un graphique.".to_string());
+    }
+
+    let mut errors = Vec::new();
+
+    for candidate in yahoo_symbol_candidates(&storage_symbol) {
+        match fetch_history_from_yahoo_symbol(&candidate, &period) {
+            Ok(mut history) => {
+                history.symbol = storage_symbol.clone();
+                return Ok(history);
+            }
+            Err(error) => errors.push(format!("{candidate}: {error}")),
+        }
+    }
+
+    Err(format!(
+        "Impossible de récupérer l'historique Yahoo Finance : {}",
+        errors.join(" | ")
+    ))
+}
+
+#[tauri::command]
 fn create_security_from_online_result(input: NewOnlineSecurity) -> Result<DbSecurity, String> {
     let symbol = preferred_storage_symbol(input.symbol.trim());
     let name = input.name.trim().to_string();
@@ -2118,6 +2285,22 @@ fn apply_stored_transaction_effect(
             update_account_cash(transaction, from_account_id, -sign * stored.amount)?;
             update_account_cash(transaction, to_account_id, sign * stored.amount)?;
         }
+        "dividend" => {
+            let account_id = stored
+                .account_id
+                .as_deref()
+                .or(stored.to_account_id.as_deref())
+                .ok_or_else(|| "Compte manquant pour le dividende.".to_string())?;
+            update_account_cash(transaction, account_id, sign * stored.amount)?;
+        }
+        "fee" => {
+            let account_id = stored
+                .account_id
+                .as_deref()
+                .or(stored.from_account_id.as_deref())
+                .ok_or_else(|| "Compte manquant pour les frais.".to_string())?;
+            update_account_cash(transaction, account_id, -sign * stored.amount)?;
+        }
         "buy" => {
             let account_id = stored
                 .account_id
@@ -2204,7 +2387,7 @@ fn stored_transaction_from_update_input(
 
     if !matches!(
         transaction_type.as_str(),
-        "deposit" | "withdrawal" | "transfer" | "buy" | "sell"
+        "deposit" | "withdrawal" | "transfer" | "buy" | "sell" | "dividend" | "fee"
     ) {
         return Err("Type de transaction invalide.".to_string());
     }
@@ -2216,7 +2399,7 @@ fn stored_transaction_from_update_input(
     }
 
     let amount = match transaction_type.as_str() {
-        "deposit" | "withdrawal" | "transfer" => {
+        "deposit" | "withdrawal" | "transfer" | "dividend" | "fee" => {
             let amount = input
                 .amount
                 .ok_or_else(|| "Montant obligatoire.".to_string())?;
@@ -2243,27 +2426,96 @@ fn stored_transaction_from_update_input(
             if quantity <= 0.0 || price <= 0.0 {
                 return Err("Quantité et prix doivent être supérieurs à 0.".to_string());
             }
-            quantity * price - fees
+
+            let net_amount = quantity * price - fees;
+            if net_amount <= 0.0 {
+                return Err("Les frais ne peuvent pas dépasser le montant de la vente.".to_string());
+            }
+
+            net_amount
         }
         _ => unreachable!(),
     };
 
-    if transaction_type == "transfer" && input.from_account_id == input.to_account_id {
-        return Err(
-            "Le compte source et le compte de destination doivent être différents.".to_string(),
-        );
+    let mut from_account_id = input
+        .from_account_id
+        .filter(|value| !value.trim().is_empty());
+    let mut to_account_id = input.to_account_id.filter(|value| !value.trim().is_empty());
+    let mut account_id = input.account_id.filter(|value| !value.trim().is_empty());
+    let security_id = input.security_id.filter(|value| !value.trim().is_empty());
+
+    match transaction_type.as_str() {
+        "deposit" => {
+            let destination = to_account_id
+                .clone()
+                .ok_or_else(|| "Compte destination obligatoire pour un dépôt.".to_string())?;
+            account_id = Some(destination);
+            from_account_id = None;
+        }
+        "withdrawal" => {
+            let source = from_account_id
+                .clone()
+                .ok_or_else(|| "Compte source obligatoire pour un retrait.".to_string())?;
+            account_id = Some(source);
+            to_account_id = None;
+        }
+        "transfer" => {
+            if from_account_id.is_none() || to_account_id.is_none() {
+                return Err(
+                    "Compte source et destination obligatoires pour un transfert.".to_string(),
+                );
+            }
+
+            if from_account_id == to_account_id {
+                return Err(
+                    "Le compte source et le compte de destination doivent être différents."
+                        .to_string(),
+                );
+            }
+
+            account_id = None;
+        }
+        "dividend" => {
+            let destination = account_id
+                .clone()
+                .or_else(|| to_account_id.clone())
+                .ok_or_else(|| "Compte obligatoire pour un dividende.".to_string())?;
+            account_id = Some(destination.clone());
+            to_account_id = Some(destination);
+            from_account_id = None;
+        }
+        "fee" => {
+            let source = account_id
+                .clone()
+                .or_else(|| from_account_id.clone())
+                .ok_or_else(|| "Compte obligatoire pour les frais.".to_string())?;
+            account_id = Some(source.clone());
+            from_account_id = Some(source);
+            to_account_id = None;
+        }
+        "buy" | "sell" => {
+            if account_id.is_none() {
+                return Err("Compte obligatoire pour un achat ou une vente.".to_string());
+            }
+
+            if security_id.is_none() {
+                return Err("Actif obligatoire pour un achat ou une vente.".to_string());
+            }
+
+            from_account_id = None;
+            to_account_id = None;
+        }
+        _ => unreachable!(),
     }
 
     Ok(StoredTransaction {
         id: input.id.trim().to_string(),
         date: input.date,
         transaction_type,
-        from_account_id: input
-            .from_account_id
-            .filter(|value| !value.trim().is_empty()),
-        to_account_id: input.to_account_id.filter(|value| !value.trim().is_empty()),
-        account_id: input.account_id.filter(|value| !value.trim().is_empty()),
-        security_id: input.security_id.filter(|value| !value.trim().is_empty()),
+        from_account_id,
+        to_account_id,
+        account_id,
+        security_id,
         quantity: input.quantity,
         price: input.price,
         fees,
@@ -2898,9 +3150,12 @@ fn create_cash_transaction(input: NewCashTransaction) -> Result<String, String> 
 
     let transaction_type = input.transaction_type.as_str();
 
-    if !matches!(transaction_type, "deposit" | "withdrawal" | "transfer") {
+    if !matches!(
+        transaction_type,
+        "deposit" | "withdrawal" | "transfer" | "dividend" | "fee"
+    ) {
         return Err(
-            "Cette première version accepte uniquement dépôt, retrait et transfert.".to_string(),
+            "Cette commande accepte dépôt, retrait, transfert, dividende et frais.".to_string(),
         );
     }
 
@@ -2959,7 +3214,34 @@ fn create_cash_transaction(input: NewCashTransaction) -> Result<String, String> 
 
             (Some(from_account_id), Some(to_account_id), None)
         }
+        "dividend" => {
+            let account_id = input
+                .to_account_id
+                .clone()
+                .or_else(|| input.from_account_id.clone())
+                .ok_or_else(|| "Compte obligatoire pour un dividende.".to_string())?;
+
+            update_account_cash(&sqlite_transaction, &account_id, input.amount)?;
+
+            (None, Some(account_id.clone()), Some(account_id))
+        }
+        "fee" => {
+            let account_id = input
+                .from_account_id
+                .clone()
+                .or_else(|| input.to_account_id.clone())
+                .ok_or_else(|| "Compte obligatoire pour les frais.".to_string())?;
+
+            update_account_cash(&sqlite_transaction, &account_id, -input.amount)?;
+
+            (Some(account_id.clone()), None, Some(account_id))
+        }
         _ => unreachable!(),
+    };
+
+    let security_id = match transaction_type {
+        "dividend" | "fee" => input.security_id.filter(|value| !value.trim().is_empty()),
+        _ => None,
     };
 
     sqlite_transaction
@@ -2979,7 +3261,7 @@ fn create_cash_transaction(input: NewCashTransaction) -> Result<String, String> 
               amount,
               note
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, NULL, NULL, 0, ?7, ?8)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, NULL, 0, ?8, ?9)
             ",
             params![
                 id,
@@ -2988,6 +3270,7 @@ fn create_cash_transaction(input: NewCashTransaction) -> Result<String, String> 
                 from_account_id,
                 to_account_id,
                 account_id,
+                security_id,
                 input.amount,
                 note
             ],
@@ -3015,6 +3298,7 @@ pub fn run() {
             update_open_position_prices,
             create_security,
             search_online_assets,
+            lookup_online_asset_history,
             lookup_online_asset_quote,
             create_security_from_online_result,
             create_cash_transaction,

@@ -41,11 +41,31 @@ const nav = [
   "Journal",
 ];
 
-type TransactionFormType = "deposit" | "withdrawal" | "transfer" | "buy" | "sell";
-type CashTransactionType = "deposit" | "withdrawal" | "transfer";
+type TransactionFormType = "deposit" | "withdrawal" | "transfer" | "buy" | "sell" | "dividend" | "fee";
+type CashTransactionType = "deposit" | "withdrawal" | "transfer" | "dividend" | "fee";
 type MarketChartPeriod = "1M" | "6M" | "1A" | "5A" | "MAX";
 
 const marketChartPeriods: MarketChartPeriod[] = ["1M", "6M", "1A", "5A", "MAX"];
+
+type PortfolioSettings = {
+  targetEtfPercent: number;
+  targetActionsPercent: number;
+  targetCryptoPercent: number;
+  targetCashPercent: number;
+  maxLineWeightPercent: number;
+  defaultMonthlyContribution: number;
+  defaultAnnualReturnPercent: number;
+};
+
+const defaultPortfolioSettings: PortfolioSettings = {
+  targetEtfPercent: 40,
+  targetActionsPercent: 45,
+  targetCryptoPercent: 10,
+  targetCashPercent: 5,
+  maxLineWeightPercent: 20,
+  defaultMonthlyContribution: monthlyContribution.amount,
+  defaultAnnualReturnPercent: 6,
+};
 
 type AllocationDisplayRow = {
   bucket: string;
@@ -162,6 +182,7 @@ function App() {
   const [topbarMarketPeriod, setTopbarMarketPeriod] = useState<MarketChartPeriod>("6M");
   const [topbarSearchError, setTopbarSearchError] = useState<string | null>(null);
   const [isTopbarSearching, setIsTopbarSearching] = useState(false);
+  const [portfolioSettings, setPortfolioSettings] = useState(() => readPortfolioSettings());
   const topbarSearchRef = useRef<HTMLFormElement | null>(null);
   useEffect(() => {
     function closeTopbarMarketPanel() {
@@ -337,6 +358,10 @@ function App() {
     saveStoredValue("appearance.darkMode", isDarkMode);
   }, [isDarkMode]);
 
+  useEffect(() => {
+    savePortfolioSettings(portfolioSettings);
+  }, [portfolioSettings]);
+
   const mockSummary = getPortfolioSummary();
   const mockPositionRows = getPositionRows();
   const mockAllocationRows = getAllocationRows();
@@ -370,6 +395,8 @@ function App() {
       }))
     : mockAllocationRows;
 
+  const allocationRowsWithSettings = applyPortfolioSettingsToAllocationRows(allocationRows, portfolioSettings);
+
   const accounts = dashboardData?.accounts ?? [];
   const chartSnapshots = dashboardData?.snapshots ?? [];
   const topbarPrimaryResult = topbarSelectedAsset ?? topbarSearchResults[0] ?? null;
@@ -396,7 +423,12 @@ function App() {
         >
           Importer / Exporter
         </button>
-        <button className="nav-link">Paramètres</button>
+        <button
+          className={currentPage === "Paramètres" ? "nav-link active" : "nav-link"}
+          onClick={() => setCurrentPage("Paramètres")}
+        >
+          Paramètres
+        </button>
 
         <div className="local-data">
           <span className={dashboardData ? "green-dot" : "warning-dot"} />
@@ -488,7 +520,7 @@ function App() {
         {currentPage === "Aperçu" ? (
           <OverviewPage
             accounts={accounts}
-            allocationRows={allocationRows}
+            allocationRows={allocationRowsWithSettings}
             isPrivacyMode={isPrivacyMode}
             onNavigate={setCurrentPage}
             positions={positionsPageRows}
@@ -499,7 +531,7 @@ function App() {
         ) : currentPage === "Répartition" ? (
           <AllocationPage
             accounts={accounts}
-            allocationRows={allocationRows}
+            allocationRows={allocationRowsWithSettings}
             isPrivacyMode={isPrivacyMode}
             positions={positionsPageRows}
             summary={summary}
@@ -518,6 +550,7 @@ function App() {
             accounts={accounts}
             isPrivacyMode={isPrivacyMode}
             onTransactionCreated={refreshData}
+            positions={positionsPageRows}
             securities={securities}
             transactions={transactions}
             transactionsError={transactionsError}
@@ -525,12 +558,13 @@ function App() {
         ) : currentPage === "Prévisionnel" ? (
           <ForecastPage
             isPrivacyMode={isPrivacyMode}
+            settings={portfolioSettings}
             summary={summary}
           />
         ) : currentPage === "Recommandations" ? (
           <RecommendationsPage
             accounts={accounts}
-            allocationRows={allocationRows}
+            allocationRows={allocationRowsWithSettings}
             isPrivacyMode={isPrivacyMode}
             positions={positionsPageRows}
             summary={summary}
@@ -554,7 +588,7 @@ function App() {
         ) : currentPage === "Portefeuille" ? (
           <DashboardPage
             accounts={accounts}
-            allocationRows={allocationRows}
+            allocationRows={allocationRowsWithSettings}
             databaseError={databaseError}
             dashboardData={dashboardData}
             isPrivacyMode={isPrivacyMode}
@@ -566,6 +600,11 @@ function App() {
             onNavigate={setCurrentPage}
             priceUpdateError={priceUpdateError}
             priceUpdateSummary={priceUpdateSummary}
+          />
+        ) : currentPage === "Paramètres" ? (
+          <SettingsPage
+            settings={portfolioSettings}
+            onSettingsChange={setPortfolioSettings}
           />
         ) : (
           <PlaceholderPage title={currentPage} />
@@ -788,9 +827,12 @@ function OverviewPage({
 
   const cashValue = accounts.reduce((sum, account) => sum + account.cash_balance, 0);
   const cashWeight = summary.total > 0 ? (cashValue / summary.total) * 100 : 0;
+
   const topPositions = [...positions].sort((left, right) => right.value - left.value).slice(0, 4);
   const topPosition = topPositions[0] ?? null;
   const topPositionWeight = topPosition && summary.total > 0 ? (topPosition.value / summary.total) * 100 : 0;
+
+  const largestAllocation = [...allocationRowsClean].sort((left, right) => right.actualPercent - left.actualPercent)[0] ?? null;
 
   const largestGap = [...allocationRowsClean]
     .map((row) => ({
@@ -798,8 +840,6 @@ function OverviewPage({
       gap: (row.targetPercent ?? 0) - (row.actualPercent ?? 0),
     }))
     .sort((left, right) => right.gap - left.gap)[0] ?? null;
-
-  const largestAllocation = [...allocationRowsClean].sort((left, right) => right.actualPercent - left.actualPercent)[0] ?? null;
 
   const latestTransactions = transactions
     .filter((transaction) => !["opening_position", "opening_cash"].includes(transaction.transaction_type))
@@ -814,155 +854,187 @@ function OverviewPage({
     if (type === "sell") return "Vente";
     if (type === "dividend") return "Dividende";
     if (type === "fee") return "Frais";
+
     return type;
   }
 
   return (
-    <section className="page overview-final-page">
-      <div className="title-block overview-final-title">
+    <section className="page overview-clean-page">
+      <div className="title-block">
         <h1>Aperçu</h1>
-        <p>Vue rapide du portefeuille : patrimoine, allocation, risques et dernières opérations.</p>
+        <p>Résumé utile du portefeuille, sans répéter toutes les pages.</p>
       </div>
 
-      <div className="overview-final-grid">
-        <article className="card overview-final-total">
-          <div>
-            <span>Aperçu rapide</span>
-            <h2>{displayEuro(summary.total, isPrivacyMode)}</h2>
-            <p>
-              <strong className={summary.performance_amount >= 0 ? "positive" : "negative"}>
-                {displayEuro(summary.performance_amount, isPrivacyMode)} · {formatSignedPercent(summary.performance_percent)}
-              </strong>
-              <small> depuis le {summary.start_date}</small>
-            </p>
-          </div>
-
-          <div className="overview-final-actions">
-            <button className="secondary-action" type="button" onClick={() => onNavigate("Portefeuille")}>
-              Portefeuille
-            </button>
-            <button className="primary-action" type="button" onClick={() => onNavigate("Recommandations")}>
-              Recommandations
-            </button>
-          </div>
-        </article>
-
-        <article className="card overview-final-watch">
-          <div className="card-header">
-            <h2>À surveiller</h2>
-          </div>
-
-          <div className="overview-final-watch-list">
-            <div>
-              <span>Classe à renforcer</span>
-              <strong>{largestGap && largestGap.gap > 0 ? largestGap.bucket : "RAS"}</strong>
-              <p>
-                {largestGap && largestGap.gap > 0
-                  ? `${formatUnsignedPercent(largestGap.gap)} sous cible`
-                  : "Allocation proche des objectifs"}
-              </p>
-            </div>
-
-            <div>
-              <span>Concentration</span>
-              <strong>{topPosition ? topPosition.security_name : "Aucune ligne"}</strong>
-              <p>{topPosition ? `${formatUnsignedPercent(topPositionWeight)} du portefeuille` : "Aucune position"}</p>
-            </div>
-          </div>
-        </article>
-
-        <div className="overview-final-kpis">
-          <MetricCard label="Cash" value={displayEuro(cashValue, isPrivacyMode)} note={`${formatUnsignedPercent(cashWeight)} du portefeuille`} />
-          <MetricCard label="Classe dominante" value={largestAllocation ? largestAllocation.bucket : "—"} note={largestAllocation ? formatUnsignedPercent(largestAllocation.actualPercent) : "aucune"} />
-          <MetricCard label="À renforcer" value={largestGap && largestGap.gap > 0 ? largestGap.bucket : "RAS"} note={largestGap && largestGap.gap > 0 ? `${formatUnsignedPercent(largestGap.gap)} sous cible` : "allocation proche"} />
-          <MetricCard label="Ligne principale" value={topPosition ? formatUnsignedPercent(topPositionWeight) : "—"} note={topPosition?.security_name ?? "aucune"} />
+      <article className="card overview-clean-hero">
+        <div>
+          <span>Aperçu rapide</span>
+          <h2>{displayEuro(summary.total, isPrivacyMode)}</h2>
+          <p>
+            <strong className={summary.performance_amount >= 0 ? "positive" : "negative"}>
+              {displayEuro(summary.performance_amount, isPrivacyMode)} · {formatSignedPercent(summary.performance_percent)}
+            </strong>
+            <small> depuis le {summary.start_date}</small>
+          </p>
         </div>
 
-        <article className="card overview-final-card overview-final-allocation">
-          <div className="card-header">
-            <h2>Allocation</h2>
-            <button className="secondary-action" type="button" onClick={() => onNavigate("Répartition")}>
-              Détail
-            </button>
-          </div>
+        <div className="overview-clean-actions">
+          <button className="secondary-action" type="button" onClick={() => onNavigate("Portefeuille")}>
+            Portefeuille
+          </button>
+          <button className="primary-action" type="button" onClick={() => onNavigate("Recommandations")}>
+            Recommandations
+          </button>
+        </div>
+      </article>
 
-          <div className="overview-final-bars">
-            {allocationRowsClean.map((row) => (
-              <div className="overview-final-bar-row" key={row.bucket}>
-                <div>
-                  <strong>{row.bucket}</strong>
-                  <span>{displayEuro(row.value, isPrivacyMode)}</span>
+      <div className="overview-clean-metrics">
+        <article className="card">
+          <span>Cash</span>
+          <strong>{displayEuro(cashValue, isPrivacyMode)}</strong>
+          <p>{formatUnsignedPercent(cashWeight)} du portefeuille</p>
+        </article>
+
+        <article className="card">
+          <span>Classe dominante</span>
+          <strong>{largestAllocation ? largestAllocation.bucket : "—"}</strong>
+          <p>{largestAllocation ? formatUnsignedPercent(largestAllocation.actualPercent) : "aucune"}</p>
+        </article>
+
+        <article className="card">
+          <span>À renforcer</span>
+          <strong>{largestGap && largestGap.gap > 0 ? largestGap.bucket : "RAS"}</strong>
+          <p>{largestGap && largestGap.gap > 0 ? `${formatUnsignedPercent(largestGap.gap)} sous cible` : "allocation proche"}</p>
+        </article>
+
+        <article className="card">
+          <span>Ligne principale</span>
+          <strong>{topPosition ? formatUnsignedPercent(topPositionWeight) : "—"}</strong>
+          <p>{topPosition?.security_name ?? "aucune"}</p>
+        </article>
+      </div>
+
+      <div className="overview-clean-columns">
+        <div className="overview-clean-column">
+          <article className="card overview-clean-card">
+            <div className="card-header">
+              <h2>Allocation</h2>
+              <button className="secondary-action" type="button" onClick={() => onNavigate("Répartition")}>
+                Détail
+              </button>
+            </div>
+
+            <div className="overview-clean-bars">
+              {allocationRowsClean.map((row) => (
+                <div className="overview-clean-bar-row" key={row.bucket}>
+                  <div>
+                    <strong>{row.bucket}</strong>
+                    <span>{displayEuro(row.value, isPrivacyMode)}</span>
+                  </div>
+
+                  <div className="overview-clean-bar-track">
+                    <span style={{ width: `${Math.min(Math.max(row.actualPercent, 0), 100)}%`, background: colorForBucket(row.bucket) }} />
+                  </div>
+
+                  <p>{formatUnsignedPercent(row.actualPercent)}</p>
                 </div>
+              ))}
+            </div>
+          </article>
 
-                <div className="overview-final-bar-track">
-                  <span style={{ width: `${Math.min(Math.max(row.actualPercent, 0), 100)}%`, background: colorForBucket(row.bucket) }} />
-                </div>
+          <article className="card overview-clean-card">
+            <div className="card-header">
+              <h2>Principales lignes</h2>
+              <button className="secondary-action" type="button" onClick={() => onNavigate("Positions")}>
+                Positions
+              </button>
+            </div>
 
-                <p>{formatUnsignedPercent(row.actualPercent)}</p>
+            <div className="overview-clean-list">
+              {topPositions.map((position) => {
+                const weight = summary.total > 0 ? (position.value / summary.total) * 100 : 0;
+
+                return (
+                  <div className="overview-clean-line" key={position.position_id}>
+                    <div>
+                      <strong>{position.security_name}</strong>
+                      <span>{position.account_name} · {position.asset_class}</span>
+                    </div>
+                    <p>
+                      {displayEuro(position.value, isPrivacyMode)}
+                      <small>{formatUnsignedPercent(weight)}</small>
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          </article>
+        </div>
+
+        <div className="overview-clean-column">
+          <article className="card overview-clean-card">
+            <div className="card-header">
+              <h2>À surveiller</h2>
+              <button className="secondary-action" type="button" onClick={() => onNavigate("Recommandations")}>
+                Voir
+              </button>
+            </div>
+
+            <div className="overview-clean-list">
+              <div className="overview-clean-info">
+                <span>Classe à renforcer</span>
+                <strong>{largestGap && largestGap.gap > 0 ? largestGap.bucket : "RAS"}</strong>
+                <p>
+                  {largestGap && largestGap.gap > 0
+                    ? `${largestGap.bucket} est sous la cible de ${formatUnsignedPercent(largestGap.gap)}.`
+                    : "Pas d’écart prioritaire."}
+                </p>
               </div>
-            ))}
-          </div>
-        </article>
 
-        <article className="card overview-final-card overview-final-lines">
-          <div className="card-header">
-            <h2>Principales lignes</h2>
-            <button className="secondary-action" type="button" onClick={() => onNavigate("Positions")}>
-              Voir
-            </button>
-          </div>
+              <div className="overview-clean-info">
+                <span>Concentration</span>
+                <strong>{topPosition ? topPosition.security_name : "Aucune ligne"}</strong>
+                <p>{topPosition ? `${formatUnsignedPercent(topPositionWeight)} du portefeuille.` : "Aucune position à analyser."}</p>
+              </div>
 
-          <div className="overview-final-list">
-            {topPositions.map((position) => {
-              const weight = summary.total > 0 ? (position.value / summary.total) * 100 : 0;
+              <div className="overview-clean-info">
+                <span>Cash disponible</span>
+                <strong>{displayEuro(cashValue, isPrivacyMode)}</strong>
+                <p>{formatUnsignedPercent(cashWeight)} du portefeuille.</p>
+              </div>
+            </div>
+          </article>
 
-              return (
-                <div className="overview-final-line" key={position.position_id}>
-                  <div>
-                    <strong>{position.security_name}</strong>
-                    <span>{position.account_name} · {position.asset_class}</span>
+          <article className="card overview-clean-card">
+            <div className="card-header">
+              <h2>Dernières opérations</h2>
+              <button className="secondary-action" type="button" onClick={() => onNavigate("Transactions")}>
+                Transactions
+              </button>
+            </div>
+
+            <div className="overview-clean-list">
+              {latestTransactions.length > 0 ? (
+                latestTransactions.map((transaction) => (
+                  <div className="overview-clean-line" key={transaction.id}>
+                    <div>
+                      <strong>{overviewTransactionLabel(transaction.transaction_type)}</strong>
+                      <span>
+                        {formatDate(transaction.date)} · {transaction.account_name ?? transaction.from_account_name ?? transaction.to_account_name ?? "Compte non renseigné"}
+                      </span>
+                    </div>
+                    <p>{displayEuro(transaction.amount, isPrivacyMode)}</p>
                   </div>
-                  <p>
-                    {displayEuro(position.value, isPrivacyMode)}
-                    <small>{formatUnsignedPercent(weight)}</small>
-                  </p>
-                </div>
-              );
-            })}
-          </div>
-        </article>
-
-        <article className="card overview-final-card overview-final-transactions">
-          <div className="card-header">
-            <h2>Dernières opérations</h2>
-            <button className="secondary-action" type="button" onClick={() => onNavigate("Transactions")}>
-              Transactions
-            </button>
-          </div>
-
-          <div className="overview-final-transaction-grid">
-            {latestTransactions.length > 0 ? (
-              latestTransactions.map((transaction) => (
-                <div className="overview-final-line" key={transaction.id}>
-                  <div>
-                    <strong>{overviewTransactionLabel(transaction.transaction_type)}</strong>
-                    <span>
-                      {formatDate(transaction.date)} · {transaction.account_name ?? transaction.from_account_name ?? transaction.to_account_name ?? "Compte non renseigné"}
-                    </span>
-                  </div>
-                  <p>{displayEuro(transaction.amount, isPrivacyMode)}</p>
-                </div>
-              ))
-            ) : (
-              <p className="muted">Aucune opération visible.</p>
-            )}
-          </div>
-        </article>
+                ))
+              ) : (
+                <p className="muted">Aucune opération visible.</p>
+              )}
+            </div>
+          </article>
+        </div>
       </div>
     </section>
   );
 }
-
 
 function DashboardPage({
   accounts,
@@ -1125,7 +1197,7 @@ function DashboardPage({
 
             <div className="allocation-target-note">
               <span>Objectif cible</span>
-              <strong>ETF 40 % · Actions 45 % · Crypto 10 % · Cash 5 %</strong>
+              <strong>{formatAllocationTargetNote(actualAllocationRows)}</strong>
             </div>
 
           </article>
@@ -1410,16 +1482,114 @@ function saveStoredValue(key: string, value: string | number | boolean) {
 }
 
 
+
+function safeNumber(value: unknown, fallback: number) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const parsed = parseDecimal(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  return fallback;
+}
+
+function clampPercent(value: number, min = 0, max = 100) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function readPortfolioSettings(): PortfolioSettings {
+  if (typeof window === "undefined") {
+    return defaultPortfolioSettings;
+  }
+
+  const raw = window.localStorage.getItem("portfolio.settings");
+
+  if (!raw) {
+    return defaultPortfolioSettings;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<PortfolioSettings>;
+
+    return {
+      targetEtfPercent: clampPercent(safeNumber(parsed.targetEtfPercent, defaultPortfolioSettings.targetEtfPercent)),
+      targetActionsPercent: clampPercent(safeNumber(parsed.targetActionsPercent, defaultPortfolioSettings.targetActionsPercent)),
+      targetCryptoPercent: clampPercent(safeNumber(parsed.targetCryptoPercent, defaultPortfolioSettings.targetCryptoPercent)),
+      targetCashPercent: clampPercent(safeNumber(parsed.targetCashPercent, defaultPortfolioSettings.targetCashPercent)),
+      maxLineWeightPercent: clampPercent(safeNumber(parsed.maxLineWeightPercent, defaultPortfolioSettings.maxLineWeightPercent), 1, 100),
+      defaultMonthlyContribution: Math.max(safeNumber(parsed.defaultMonthlyContribution, defaultPortfolioSettings.defaultMonthlyContribution), 0),
+      defaultAnnualReturnPercent: Math.min(Math.max(safeNumber(parsed.defaultAnnualReturnPercent, defaultPortfolioSettings.defaultAnnualReturnPercent), -20), 30),
+    };
+  } catch {
+    return defaultPortfolioSettings;
+  }
+}
+
+function savePortfolioSettings(settings: PortfolioSettings) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem("portfolio.settings", JSON.stringify(settings));
+}
+
+function targetForBucket(bucket: string, settings: PortfolioSettings) {
+  if (bucket === "ETF") return settings.targetEtfPercent;
+  if (bucket === "Actions") return settings.targetActionsPercent;
+  if (bucket === "Crypto") return settings.targetCryptoPercent;
+  if (bucket === "Cash") return settings.targetCashPercent;
+
+  return null;
+}
+
+function applyPortfolioSettingsToAllocationRows(rows: AllocationDisplayRow[], settings: PortfolioSettings) {
+  return rows.map((row) => {
+    const targetPercent = targetForBucket(row.bucket, settings) ?? row.targetPercent;
+    const actualPercent = row.actualPercent ?? 0;
+
+    return {
+      ...row,
+      targetPercent,
+      differencePercent: actualPercent - targetPercent,
+    };
+  });
+}
+
+function portfolioTargetTotal(settings: PortfolioSettings) {
+  return (
+    settings.targetEtfPercent +
+    settings.targetActionsPercent +
+    settings.targetCryptoPercent +
+    settings.targetCashPercent
+  );
+}
+
+function formatPortfolioTargetNote(settings: PortfolioSettings) {
+  return `ETF ${formatUnsignedPercent(settings.targetEtfPercent)} · Actions ${formatUnsignedPercent(settings.targetActionsPercent)} · Crypto ${formatUnsignedPercent(settings.targetCryptoPercent)} · Cash ${formatUnsignedPercent(settings.targetCashPercent)}`;
+}
+
+function formatAllocationTargetNote(rows: AllocationDisplayRow[]) {
+  return rows
+    .map((row) => `${row.bucket} ${formatUnsignedPercent(row.targetPercent)}`)
+    .join(" · ");
+}
+
+
 function ForecastPage({
   isPrivacyMode,
+  settings,
   summary,
 }: {
   isPrivacyMode: boolean;
+  settings: PortfolioSettings;
   summary: { total: number; performance_amount: number; performance_percent: number; start_date: string };
 }) {
-  const [monthlyInput, setMonthlyInput] = useState(() => readStoredValue("forecast.monthlyContribution", String(monthlyContribution.amount)));
+  const [monthlyInput, setMonthlyInput] = useState(() => readStoredValue("forecast.monthlyContribution", String(settings.defaultMonthlyContribution)));
   const [yearsInput, setYearsInput] = useState(() => readStoredValue("forecast.years", "10"));
-  const [annualReturnInput, setAnnualReturnInput] = useState(() => readStoredValue("forecast.annualReturn", "6"));
+  const [annualReturnInput, setAnnualReturnInput] = useState(() => readStoredValue("forecast.annualReturn", String(settings.defaultAnnualReturnPercent)));
   const [annualIncreaseInput, setAnnualIncreaseInput] = useState(() => readStoredValue("forecast.annualContributionIncrease", "0"));
   const [inflationEnabled, setInflationEnabled] = useState(() => readStoredBoolean("forecast.inflationEnabled", false));
   const [inflationInput, setInflationInput] = useState(() => readStoredValue("forecast.inflation", "2"));
@@ -2780,6 +2950,7 @@ function TransactionsPage({
   accounts,
   isPrivacyMode,
   onTransactionCreated,
+  positions,
   securities,
   transactions,
   transactionsError,
@@ -2787,6 +2958,7 @@ function TransactionsPage({
   accounts: DashboardData["accounts"];
   isPrivacyMode: boolean;
   onTransactionCreated: () => Promise<void>;
+  positions: PositionPageRow[];
   securities: DbSecurity[];
   transactions: DbTransaction[];
   transactionsError: string | null;
@@ -2840,6 +3012,14 @@ function TransactionsPage({
     .filter((transaction) => transaction.transaction_type === "sell")
     .reduce((sum, transaction) => sum + transaction.amount, 0);
 
+  const totalDividends = visibleTransactions
+    .filter((transaction) => transaction.transaction_type === "dividend")
+    .reduce((sum, transaction) => sum + transaction.amount, 0);
+
+  const totalFees = visibleTransactions
+    .filter((transaction) => transaction.transaction_type === "fee")
+    .reduce((sum, transaction) => sum + transaction.amount, 0);
+
   return (
     <section className="page">
       <div className="title-block page-title-row">
@@ -2866,6 +3046,7 @@ function TransactionsPage({
             setIsFormOpen(false);
             setEditingTransaction(null);
           }}
+          positions={positions}
           securities={securities}
           transactionToEdit={editingTransaction}
         />
@@ -2877,6 +3058,8 @@ function TransactionsPage({
         <MetricCard label="Retraits" value={displayEuro(totalWithdrawals, isPrivacyMode)} note="sorties enregistrées" />
         <MetricCard label="Achats" value={displayEuro(totalBuys, isPrivacyMode)} note="ordres exécutés" />
         <MetricCard label="Ventes" value={displayEuro(totalSells, isPrivacyMode)} note="cessions" />
+        <MetricCard label="Dividendes" value={displayEuro(totalDividends, isPrivacyMode)} note="revenus encaissés" />
+        <MetricCard label="Frais" value={displayEuro(totalFees, isPrivacyMode)} note="coûts enregistrés" />
         <MetricCard label="Transferts" value={displayEuro(totalTransfers, isPrivacyMode)} note="entre comptes" />
       </div>
 
@@ -2938,11 +3121,13 @@ function TransactionsPage({
   );
 }
 
+
 function TransactionForm({
   accounts,
   isPrivacyMode,
   onCancel,
   onCreated,
+  positions,
   securities,
   transactionToEdit,
 }: {
@@ -2950,6 +3135,7 @@ function TransactionForm({
   isPrivacyMode: boolean;
   onCancel: () => void;
   onCreated: () => Promise<void>;
+  positions: PositionPageRow[];
   securities: DbSecurity[];
   transactionToEdit: DbTransaction | null;
 }) {
@@ -2979,7 +3165,13 @@ function TransactionForm({
 
   const isEditing = transactionToEdit !== null;
   const isTrade = transactionType === "buy" || transactionType === "sell";
+  const isDividend = transactionType === "dividend";
+  const isFee = transactionType === "fee";
+  const isIncomeOrFee = isDividend || isFee;
   const selectedSecurity = availableSecurities.find((security) => security.id === securityId);
+  const selectedAccount = accounts.find((account) => account.id === accountId);
+  const selectedFromAccount = accounts.find((account) => account.id === fromAccountId);
+  const selectedToAccount = accounts.find((account) => account.id === toAccountId);
   const normalizedAssetSearch = assetQuery.trim().toLowerCase();
 
   const filteredSecurities = normalizedAssetSearch
@@ -2991,6 +3183,40 @@ function TransactionForm({
         ))
         .slice(0, 8)
     : [];
+
+  const parsedAmount = parseDecimal(amount || "0");
+  const parsedQuantity = parseDecimal(quantity || "0");
+  const parsedPrice = parseDecimal(price || "0");
+  const parsedFees = parseDecimal(fees || "0");
+  const grossTradeAmount = isPositiveNumber(parsedQuantity) && isPositiveNumber(parsedPrice)
+    ? parsedQuantity * parsedPrice
+    : 0;
+  const tradeCashImpact = transactionType === "buy"
+    ? grossTradeAmount + (Number.isFinite(parsedFees) ? parsedFees : 0)
+    : Math.max(grossTradeAmount - (Number.isFinite(parsedFees) ? parsedFees : 0), 0);
+
+  const currentPosition = positions.find((position) => (
+    position.account_name === selectedAccount?.name &&
+    selectedSecurity !== undefined &&
+    (
+      position.security_name === selectedSecurity.name ||
+      position.ticker === selectedSecurity.ticker
+    )
+  ));
+  const ownedQuantity = currentPosition?.quantity ?? 0;
+  const projectedQuantity = transactionType === "buy"
+    ? ownedQuantity + (Number.isFinite(parsedQuantity) ? parsedQuantity : 0)
+    : ownedQuantity - (Number.isFinite(parsedQuantity) ? parsedQuantity : 0);
+  const projectedTradeCash = transactionType === "buy"
+    ? (selectedAccount?.cash_balance ?? 0) - tradeCashImpact
+    : (selectedAccount?.cash_balance ?? 0) + tradeCashImpact;
+
+  const selectedCashAccount = isDividend ? selectedToAccount : isFee ? selectedFromAccount : null;
+  const projectedCashAccountBalance = isDividend
+    ? (selectedToAccount?.cash_balance ?? 0) + (Number.isFinite(parsedAmount) ? parsedAmount : 0)
+    : isFee
+      ? (selectedFromAccount?.cash_balance ?? 0) - (Number.isFinite(parsedAmount) ? parsedAmount : 0)
+      : null;
 
   useEffect(() => {
     setAvailableSecurities(securities);
@@ -3041,8 +3267,11 @@ function TransactionForm({
 
     const currentPrice = formatInputDecimal(security.current_price);
     setPrice(currentPrice);
-    setQuantity("1");
-    setAmount(currentPrice);
+
+    if (isTrade) {
+      setQuantity("1");
+      setAmount(currentPrice);
+    }
   }
 
   function handleTradeFieldChange(field: "amount" | "quantity" | "price", value: string) {
@@ -3143,7 +3372,6 @@ function TransactionForm({
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-
     setFormError(null);
 
     if (isTrade) {
@@ -3181,6 +3409,11 @@ function TransactionForm({
 
       if (!Number.isFinite(parsedFees) || parsedFees < 0) {
         setFormError("Les frais doivent être un nombre positif ou égal à 0.");
+        return;
+      }
+
+      if (!isEditing && tradeTransactionType === "sell" && finalQuantity > ownedQuantity + 0.0000001) {
+        setFormError(`Vente impossible : tu détiens ${formatQuantity(ownedQuantity)} unité(s), tu essaies d’en vendre ${formatQuantity(finalQuantity)}.`);
         return;
       }
 
@@ -3238,12 +3471,12 @@ function TransactionForm({
       return;
     }
 
-    if (cashTransactionType === "deposit" && !toAccountId) {
+    if ((cashTransactionType === "deposit" || cashTransactionType === "dividend") && !toAccountId) {
       setFormError("Choisis un compte de destination.");
       return;
     }
 
-    if (cashTransactionType === "withdrawal" && !fromAccountId) {
+    if ((cashTransactionType === "withdrawal" || cashTransactionType === "fee") && !fromAccountId) {
       setFormError("Choisis un compte source.");
       return;
     }
@@ -3263,8 +3496,15 @@ function TransactionForm({
       date,
       amount: parsedAmount,
       note: note.trim() ? note.trim() : null,
-      from_account_id: cashTransactionType === "deposit" ? null : fromAccountId,
-      to_account_id: cashTransactionType === "withdrawal" ? null : toAccountId,
+      from_account_id:
+        cashTransactionType === "withdrawal" || cashTransactionType === "transfer" || cashTransactionType === "fee"
+          ? fromAccountId
+          : null,
+      to_account_id:
+        cashTransactionType === "deposit" || cashTransactionType === "transfer" || cashTransactionType === "dividend"
+          ? toAccountId
+          : null,
+      security_id: isIncomeOrFee && securityId ? securityId : null,
     };
 
     setIsSubmitting(true);
@@ -3277,8 +3517,16 @@ function TransactionForm({
           date,
           amount: parsedAmount,
           note: note.trim() ? note.trim() : null,
-          from_account_id: cashTransactionType === "deposit" ? null : fromAccountId,
-          to_account_id: cashTransactionType === "withdrawal" ? null : toAccountId,
+          account_id: cashTransactionType === "dividend" ? toAccountId : cashTransactionType === "fee" ? fromAccountId : null,
+          from_account_id:
+            cashTransactionType === "withdrawal" || cashTransactionType === "transfer" || cashTransactionType === "fee"
+              ? fromAccountId
+              : null,
+          to_account_id:
+            cashTransactionType === "deposit" || cashTransactionType === "transfer" || cashTransactionType === "dividend"
+              ? toAccountId
+              : null,
+          security_id: isIncomeOrFee && securityId ? securityId : null,
         };
 
         await updateTransaction(updatePayload);
@@ -3300,7 +3548,7 @@ function TransactionForm({
       <div className="transactions-header">
         <div>
           <h2>{isEditing ? "Modifier la transaction" : "Ajouter une transaction"}</h2>
-          <p>Dépôt, retrait, transfert, achat et vente. Pour les achats/ventes, montant, quantité et cours restent modifiables.</p>
+          <p>Dépôt, retrait, transfert, achat, vente, dividende ou frais. Le résumé vérifie l’effet avant validation.</p>
         </div>
         <span className="status-pill connected">{isEditing ? "Édition" : "Ajout"}</span>
       </div>
@@ -3308,12 +3556,20 @@ function TransactionForm({
       <form className="transaction-form" onSubmit={handleSubmit}>
         <label>
           Type
-          <select value={transactionType} onChange={(event) => setTransactionType(event.target.value as TransactionFormType)}>
+          <select
+            value={transactionType}
+            onChange={(event) => {
+              setTransactionType(event.target.value as TransactionFormType);
+              setFormError(null);
+            }}
+          >
             <option value="deposit">Dépôt</option>
             <option value="withdrawal">Retrait</option>
             <option value="transfer">Transfert</option>
             <option value="buy">Achat</option>
             <option value="sell">Vente</option>
+            <option value="dividend">Dividende</option>
+            <option value="fee">Frais</option>
           </select>
         </label>
 
@@ -3374,9 +3630,9 @@ function TransactionForm({
           </>
         ) : (
           <>
-            {transactionType !== "deposit" ? (
+            {transactionType === "withdrawal" || transactionType === "transfer" || transactionType === "fee" ? (
               <label>
-                Compte source
+                {transactionType === "fee" ? "Compte débité" : "Compte source"}
                 <select value={fromAccountId} onChange={(event) => setFromAccountId(event.target.value)}>
                   {accounts.map((account) => (
                     <option key={account.id} value={account.id}>{account.name}</option>
@@ -3385,15 +3641,36 @@ function TransactionForm({
               </label>
             ) : null}
 
-            {transactionType !== "withdrawal" ? (
+            {transactionType === "deposit" || transactionType === "transfer" || transactionType === "dividend" ? (
               <label>
-                Compte destination
+                {transactionType === "dividend" ? "Compte crédité" : "Compte destination"}
                 <select value={toAccountId} onChange={(event) => setToAccountId(event.target.value)}>
                   {accounts.map((account) => (
                     <option key={account.id} value={account.id}>{account.name}</option>
                   ))}
                 </select>
               </label>
+            ) : null}
+
+            {isIncomeOrFee ? (
+              <AssetPicker
+                assetQuery={assetQuery}
+                filteredSecurities={filteredSecurities}
+                isPrivacyMode={isPrivacyMode}
+                isCreatingAsset={isCreatingAsset}
+                isSearchingOnline={isSearchingOnline}
+                onAssetQueryChange={(value) => {
+                  setAssetQuery(value);
+                  setOnlineSearchError(null);
+                  setOnlineAssetResults([]);
+                }}
+                onCreateAssetFromOnlineResult={handleCreateAssetFromOnlineResult}
+                onSearchOnlineAssets={handleSearchOnlineAssets}
+                onSelectSecurity={selectSecurity}
+                onlineAssetResults={onlineAssetResults}
+                onlineSearchError={onlineSearchError}
+                selectedSecurityId={securityId}
+              />
             ) : null}
 
             <label>
@@ -3405,8 +3682,64 @@ function TransactionForm({
 
         <label className="form-note-field">
           Note
-          <input value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ex : achat LVMH ou virement mensuel vers PEA" />
+          <input value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ex : achat LVMH, dividende, frais courtier ou virement mensuel" />
         </label>
+
+        <div className="transaction-form-recap">
+          <strong>Résumé avant validation</strong>
+
+          {isTrade ? (
+            <div className="transaction-recap-grid">
+              <span>Compte</span>
+              <p>{selectedAccount?.name ?? "—"}</p>
+
+              <span>Actif</span>
+              <p>{selectedSecurity ? `${selectedSecurity.name} · ${selectedSecurity.ticker}` : "—"}</p>
+
+              <span>{transactionType === "buy" ? "Total débité" : "Total encaissé"}</span>
+              <p>{displayEuro(tradeCashImpact, isPrivacyMode)}</p>
+
+              <span>Cash estimé après</span>
+              <p>{displayEuro(projectedTradeCash, isPrivacyMode)}</p>
+
+              <span>Quantité détenue</span>
+              <p>{formatQuantity(ownedQuantity)}</p>
+
+              <span>Quantité après opération</span>
+              <p className={!isEditing && transactionType === "sell" && projectedQuantity < -0.0000001 ? "negative" : undefined}>
+                {formatQuantity(projectedQuantity)}
+              </p>
+            </div>
+          ) : (
+            <div className="transaction-recap-grid">
+              <span>Flux</span>
+              <p>
+                {transactionType === "transfer"
+                  ? `${selectedFromAccount?.name ?? "—"} → ${selectedToAccount?.name ?? "—"}`
+                  : transactionType === "deposit"
+                    ? `Entrée vers ${selectedToAccount?.name ?? "—"}`
+                    : transactionType === "withdrawal"
+                      ? `Sortie depuis ${selectedFromAccount?.name ?? "—"}`
+                      : transactionType === "dividend"
+                        ? `Dividende vers ${selectedCashAccount?.name ?? "—"}`
+                        : `Frais depuis ${selectedCashAccount?.name ?? "—"}`}
+              </p>
+
+              <span>Montant</span>
+              <p>{displayEuro(Number.isFinite(parsedAmount) ? parsedAmount : 0, isPrivacyMode)}</p>
+
+              {isIncomeOrFee ? (
+                <>
+                  <span>Actif lié</span>
+                  <p>{selectedSecurity ? `${selectedSecurity.name} · ${selectedSecurity.ticker}` : "Optionnel"}</p>
+
+                  <span>Cash estimé après</span>
+                  <p>{projectedCashAccountBalance === null ? "—" : displayEuro(projectedCashAccountBalance, isPrivacyMode)}</p>
+                </>
+              ) : null}
+            </div>
+          )}
+        </div>
 
         {formError ? <p className="form-error">{formError}</p> : null}
 
@@ -3799,6 +4132,16 @@ function buildPortfolioAuditItems(
       continue;
     }
 
+    if (transaction.transaction_type === "dividend") {
+      addCash(transaction.account_name ?? transaction.to_account_name, amount);
+      continue;
+    }
+
+    if (transaction.transaction_type === "fee") {
+      addCash(transaction.account_name ?? transaction.from_account_name, -amount);
+      continue;
+    }
+
     if (transaction.transaction_type === "buy") {
       if (!transaction.account_name || !transaction.security_name || quantity <= 0 || price <= 0) {
         warnings.push({
@@ -4170,6 +4513,195 @@ function ImportExportPage({
   );
 }
 
+
+
+function SettingsPage({
+  onSettingsChange,
+  settings,
+}: {
+  onSettingsChange: (settings: PortfolioSettings) => void;
+  settings: PortfolioSettings;
+}) {
+  const [form, setForm] = useState(() => ({
+    targetEtfPercent: String(settings.targetEtfPercent),
+    targetActionsPercent: String(settings.targetActionsPercent),
+    targetCryptoPercent: String(settings.targetCryptoPercent),
+    targetCashPercent: String(settings.targetCashPercent),
+    maxLineWeightPercent: String(settings.maxLineWeightPercent),
+    defaultMonthlyContribution: String(settings.defaultMonthlyContribution),
+    defaultAnnualReturnPercent: String(settings.defaultAnnualReturnPercent),
+  }));
+
+  const parsedSettings: PortfolioSettings = {
+    targetEtfPercent: clampPercent(parseDecimal(form.targetEtfPercent) || 0),
+    targetActionsPercent: clampPercent(parseDecimal(form.targetActionsPercent) || 0),
+    targetCryptoPercent: clampPercent(parseDecimal(form.targetCryptoPercent) || 0),
+    targetCashPercent: clampPercent(parseDecimal(form.targetCashPercent) || 0),
+    maxLineWeightPercent: clampPercent(parseDecimal(form.maxLineWeightPercent) || defaultPortfolioSettings.maxLineWeightPercent, 1, 100),
+    defaultMonthlyContribution: Math.max(parseDecimal(form.defaultMonthlyContribution) || 0, 0),
+    defaultAnnualReturnPercent: Math.min(Math.max(parseDecimal(form.defaultAnnualReturnPercent) || 0, -20), 30),
+  };
+
+  const targetTotal = portfolioTargetTotal(parsedSettings);
+  const isTargetValid = Math.abs(targetTotal - 100) < 0.01;
+
+  function updateField(field: keyof PortfolioSettings, value: string) {
+    setForm((current) => ({
+      ...current,
+      [field]: value,
+    }));
+  }
+
+  function applyDefaults() {
+    setForm({
+      targetEtfPercent: String(defaultPortfolioSettings.targetEtfPercent),
+      targetActionsPercent: String(defaultPortfolioSettings.targetActionsPercent),
+      targetCryptoPercent: String(defaultPortfolioSettings.targetCryptoPercent),
+      targetCashPercent: String(defaultPortfolioSettings.targetCashPercent),
+      maxLineWeightPercent: String(defaultPortfolioSettings.maxLineWeightPercent),
+      defaultMonthlyContribution: String(defaultPortfolioSettings.defaultMonthlyContribution),
+      defaultAnnualReturnPercent: String(defaultPortfolioSettings.defaultAnnualReturnPercent),
+    });
+  }
+
+  function saveSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!isTargetValid) {
+      return;
+    }
+
+    onSettingsChange(parsedSettings);
+  }
+
+  return (
+    <section className="page settings-v2-page">
+      <div className="title-block page-title-row">
+        <div>
+          <h1>Paramètres</h1>
+          <p>Personnalisez les cibles, les règles de risque et les hypothèses du prévisionnel.</p>
+        </div>
+
+        <span className={isTargetValid ? "status-pill connected" : "status-pill warning"}>
+          Total : {formatUnsignedPercent(targetTotal)}
+        </span>
+      </div>
+
+      <form className="settings-v2-grid" onSubmit={saveSettings}>
+        <article className="card settings-v2-card settings-v2-targets">
+          <div className="card-header">
+            <div>
+              <h2>Cibles d’allocation</h2>
+              <p className="muted">Utilisées dans Répartition, Recommandations et Aperçu.</p>
+            </div>
+
+            <span className={isTargetValid ? "status-pill connected" : "status-pill warning"}>
+              {isTargetValid ? "Équilibré" : "Total ≠ 100 %"}
+            </span>
+          </div>
+
+          <div className="settings-v2-target-grid">
+            <label>
+              <span>ETF</span>
+              <input inputMode="decimal" value={form.targetEtfPercent} onChange={(event) => updateField("targetEtfPercent", event.target.value)} />
+              <small>% du portefeuille</small>
+            </label>
+
+            <label>
+              <span>Actions</span>
+              <input inputMode="decimal" value={form.targetActionsPercent} onChange={(event) => updateField("targetActionsPercent", event.target.value)} />
+              <small>% du portefeuille</small>
+            </label>
+
+            <label>
+              <span>Crypto</span>
+              <input inputMode="decimal" value={form.targetCryptoPercent} onChange={(event) => updateField("targetCryptoPercent", event.target.value)} />
+              <small>% du portefeuille</small>
+            </label>
+
+            <label>
+              <span>Cash</span>
+              <input inputMode="decimal" value={form.targetCashPercent} onChange={(event) => updateField("targetCashPercent", event.target.value)} />
+              <small>% du portefeuille</small>
+            </label>
+          </div>
+
+          {!isTargetValid ? (
+            <p className="settings-v2-warning">Le total doit faire 100 % pour garder des recommandations cohérentes.</p>
+          ) : null}
+        </article>
+
+        <article className="card settings-v2-card">
+          <h2>Risque</h2>
+          <p className="muted">Limite utilisée pour repérer les lignes trop concentrées.</p>
+
+          <div className="settings-v2-input-row">
+            <label>
+              <span>Concentration max par ligne</span>
+              <input inputMode="decimal" value={form.maxLineWeightPercent} onChange={(event) => updateField("maxLineWeightPercent", event.target.value)} />
+              <small>% maximum conseillé</small>
+            </label>
+          </div>
+
+          <div className="settings-v2-note">
+            <span>Lecture</span>
+            <strong>Éviter de renforcer une ligne au-dessus de {formatUnsignedPercent(parsedSettings.maxLineWeightPercent)}.</strong>
+          </div>
+        </article>
+
+        <article className="card settings-v2-card">
+          <h2>Prévisionnel</h2>
+          <p className="muted">Valeurs par défaut utilisées dans la page Prévisionnel.</p>
+
+          <div className="settings-v2-two-cols">
+            <label>
+              <span>Apport mensuel</span>
+              <input inputMode="decimal" value={form.defaultMonthlyContribution} onChange={(event) => updateField("defaultMonthlyContribution", event.target.value)} />
+              <small>€/mois</small>
+            </label>
+
+            <label>
+              <span>Rendement annuel</span>
+              <input inputMode="decimal" value={form.defaultAnnualReturnPercent} onChange={(event) => updateField("defaultAnnualReturnPercent", event.target.value)} />
+              <small>% / an</small>
+            </label>
+          </div>
+        </article>
+
+        <article className="card settings-v2-card settings-v2-summary">
+          <h2>Résumé</h2>
+
+          <div className="settings-v2-summary-grid">
+            <div>
+              <span>Allocation cible</span>
+              <strong>{formatPortfolioTargetNote(parsedSettings)}</strong>
+            </div>
+
+            <div>
+              <span>Risque</span>
+              <strong>{formatUnsignedPercent(parsedSettings.maxLineWeightPercent)} max par ligne</strong>
+            </div>
+
+            <div>
+              <span>Prévisionnel</span>
+              <strong>{displayEuro(parsedSettings.defaultMonthlyContribution, false)} / mois · {formatSignedPercent(parsedSettings.defaultAnnualReturnPercent)} / an</strong>
+            </div>
+          </div>
+
+          <div className="settings-v2-actions">
+            <button className="secondary-action" type="button" onClick={applyDefaults}>
+              Réinitialiser
+            </button>
+
+            <button className="primary-action" type="submit" disabled={!isTargetValid}>
+              Enregistrer
+            </button>
+          </div>
+        </article>
+      </form>
+    </section>
+  );
+}
 
 function PlaceholderPage({ title }: { title: string }) {
   return (

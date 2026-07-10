@@ -5671,3 +5671,55 @@ td:first-child { color: #374151; font-weight: 600; }
 .overview-clean-card {
   margin: 0 !important;
 }
+
+
+/* Transaction recap */
+.transaction-form-recap {
+  grid-column: 1 / -1;
+  border: 1px solid #e7ebf0;
+  border-radius: 16px;
+  background: #f8fafc;
+  padding: 16px;
+}
+
+.transaction-form-recap > strong {
+  display: block;
+  margin-bottom: 12px;
+  color: #253142;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.transaction-recap-grid {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  gap: 9px 16px;
+  align-items: baseline;
+}
+
+.transaction-recap-grid span {
+  color: #8b949f;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.transaction-recap-grid p {
+  margin: 0;
+  color: #253142;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.app-shell.dark .transaction-form-recap {
+  background: #111820;
+  border-color: #253142;
+}
+
+.app-shell.dark .transaction-form-recap > strong,
+.app-shell.dark .transaction-recap-grid p {
+  color: #f3f4f6;
+}
+
+.app-shell.dark .transaction-recap-grid span {
+  color: #a8b3c1;
+}
