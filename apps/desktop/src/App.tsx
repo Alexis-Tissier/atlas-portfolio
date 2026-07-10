@@ -556,7 +556,6 @@ function App() {
               {isPrivacyMode ? "Afficher prix" : "Masquer prix"}
             </button>
 
-            <div className="avatar">AP</div>
           </div>
         </header>
 
