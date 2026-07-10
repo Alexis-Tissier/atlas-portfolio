@@ -2774,10 +2774,7 @@ fn latest_price_for_security(
         .optional()
         .map_err(|error| format!("Erreur lecture dernier cours {security_id} : {error}"))?;
 
-    Ok(latest_price
-        .unwrap_or(fallback_price)
-        .max(fallback_price)
-        .max(0.0))
+    Ok(latest_price.unwrap_or(fallback_price).max(0.0))
 }
 
 fn adjust_position_quantity_and_cost(
@@ -2831,7 +2828,7 @@ fn adjust_position_quantity_and_cost(
         let new_current_price = if old_current_price > 0.0 {
             old_current_price
         } else {
-            latest_price_for_security(transaction, security_id, fallback_price)?
+            latest_price_for_security(transaction, security_id, 0.0)?
         };
 
         transaction
@@ -2860,7 +2857,7 @@ fn adjust_position_quantity_and_cost(
         return Ok(());
     }
 
-    let current_price = latest_price_for_security(transaction, security_id, fallback_price)?;
+    let current_price = latest_price_for_security(transaction, security_id, 0.0)?;
     let average_price = if cost_delta > 0.0 {
         cost_delta / quantity_delta
     } else {

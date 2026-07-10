@@ -6685,3 +6685,278 @@ td:first-child { color: #374151; font-weight: 600; }
     flex-direction: column;
   }
 }
+
+
+/* Transaction-aware performance engine */
+.csv-missing-asset-price-note {
+  display: grid;
+  gap: 4px;
+  margin-top: 12px;
+  border: 1px solid rgba(79, 143, 219, .22);
+  border-radius: 11px;
+  background: rgba(79, 143, 219, .06);
+  padding: 10px 12px;
+}
+
+.csv-missing-asset-price-note strong {
+  color: #2d4f78;
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.csv-missing-asset-price-note span {
+  color: #6e7b8b;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.csv-missing-asset-actions > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.performance-engine-page {
+  gap: 18px;
+}
+
+.performance-price-explanation {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 26px;
+  border-color: rgba(79, 143, 219, .22);
+  background:
+    linear-gradient(135deg, rgba(79, 143, 219, .08), transparent 55%),
+    #fff;
+}
+
+.performance-price-explanation > div:first-child {
+  max-width: 760px;
+}
+
+.performance-price-explanation > div:first-child > span {
+  color: #6f8eb5;
+  font-size: 9px;
+  font-weight: 950;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.performance-price-explanation h2 {
+  margin: 5px 0 6px;
+  color: #243144;
+  font-size: 17px;
+  font-weight: 950;
+}
+
+.performance-price-explanation p {
+  margin: 0;
+  color: #6f7d8e;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.performance-price-formula {
+  min-width: 260px;
+  border: 1px solid rgba(79, 143, 219, .18);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, .72);
+  padding: 13px 15px;
+}
+
+.performance-price-formula strong,
+.performance-price-formula span {
+  display: block;
+}
+
+.performance-price-formula strong {
+  color: #2b4f7d;
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.performance-price-formula span {
+  margin-top: 5px;
+  color: #68778a;
+  font-size: 11px;
+}
+
+.performance-engine-summary {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.performance-engine-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.performance-engine-chart {
+  grid-column: 1 / -1;
+}
+
+.performance-composition-card,
+.performance-quality-card {
+  min-height: 100%;
+}
+
+.performance-composition-card h2,
+.performance-quality-card h2 {
+  margin: 0;
+  color: #263244;
+  font-size: 14px;
+  font-weight: 950;
+}
+
+.performance-composition-list,
+.performance-quality-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.performance-composition-list > div,
+.performance-quality-list > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid #edf0f3;
+  padding: 8px 0;
+}
+
+.performance-composition-list span,
+.performance-quality-list span {
+  color: #758293;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.performance-composition-list strong,
+.performance-quality-list strong {
+  color: #273447;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.performance-composition-list .performance-composition-total {
+  margin-top: 3px;
+  border: 0;
+  border-radius: 11px;
+  background: #f6f8fb;
+  padding: 11px 12px;
+}
+
+.performance-engine-warning,
+.performance-engine-ok {
+  margin: 13px 0 0;
+  border-radius: 10px;
+  padding: 10px 11px;
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1.45;
+}
+
+.performance-engine-warning {
+  border: 1px solid rgba(192, 101, 68, .22);
+  background: rgba(192, 101, 68, .08);
+  color: #985537;
+}
+
+.performance-engine-ok {
+  border: 1px solid rgba(69, 145, 86, .2);
+  background: rgba(69, 145, 86, .07);
+  color: #377646;
+}
+
+.performance-engine-table-card {
+  margin-top: 0;
+}
+
+.performance-engine-table-scroll {
+  overflow-x: auto;
+}
+
+.performance-engine-table {
+  min-width: 1120px;
+}
+
+.performance-engine-table td strong,
+.performance-engine-table td small {
+  display: block;
+}
+
+.performance-engine-table td small {
+  margin-top: 3px;
+  color: #8792a0;
+  font-size: 9px;
+}
+
+.app-shell.dark .csv-missing-asset-price-note,
+.app-shell.dark .performance-price-explanation,
+.app-shell.dark .performance-price-formula {
+  border-color: #2b3a4c;
+  background: #101720;
+}
+
+.app-shell.dark .csv-missing-asset-price-note strong,
+.app-shell.dark .performance-price-explanation h2,
+.app-shell.dark .performance-composition-card h2,
+.app-shell.dark .performance-quality-card h2,
+.app-shell.dark .performance-composition-list strong,
+.app-shell.dark .performance-quality-list strong {
+  color: #f2f5f9;
+}
+
+.app-shell.dark .csv-missing-asset-price-note span,
+.app-shell.dark .performance-price-explanation p,
+.app-shell.dark .performance-price-formula span,
+.app-shell.dark .performance-composition-list span,
+.app-shell.dark .performance-quality-list span {
+  color: #a9b5c3;
+}
+
+.app-shell.dark .performance-composition-list > div,
+.app-shell.dark .performance-quality-list > div {
+  border-color: #273241;
+}
+
+.app-shell.dark .performance-composition-list .performance-composition-total {
+  background: #111923;
+}
+
+@media (max-width: 1100px) {
+  .performance-engine-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .performance-price-explanation {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .performance-price-formula {
+    min-width: 0;
+  }
+}
+
+@media (max-width: 760px) {
+  .performance-engine-grid,
+  .performance-engine-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .performance-engine-chart {
+    grid-column: auto;
+  }
+
+  .csv-missing-asset-actions > div {
+    width: 100%;
+  }
+
+  .csv-missing-asset-actions > div button {
+    flex: 1 1 220px;
+  }
+}

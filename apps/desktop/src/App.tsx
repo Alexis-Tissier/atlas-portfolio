@@ -20,6 +20,7 @@ import {
   importTransactionsBatch,
   searchOnlineAssets,
   lookupOnlineAssetHistory,
+  lookupOnlineAssetQuote,
   updateAccount,
   updateTransaction,
   updateOpenPositionPrices,
@@ -579,6 +580,7 @@ function App() {
             summary={summary}
           />        ) : currentPage === "Performance" ? (
           <PerformancePage
+            accounts={accounts}
             isPrivacyMode={isPrivacyMode}
             positions={positionsPageRows}
             snapshots={chartSnapshots}
@@ -2816,75 +2818,806 @@ function DistributionLine({
 }
 
 
+
+type PerformanceLedgerPositionState = {
+  accountId: string;
+  accountName: string;
+  securityId: string;
+  securityName: string;
+  quantity: number;
+  averageCost: number;
+  realizedGain: number;
+  dividends: number;
+  tradingFees: number;
+};
+
+type PerformanceAccountRow = {
+  accountId: string;
+  accountName: string;
+  currentValue: number;
+  deposits: number;
+  withdrawals: number;
+  openingCapital: number;
+  transferBalance: number;
+  netContributions: number;
+  totalGain: number;
+  unrealizedGain: number;
+  realizedGain: number;
+  dividends: number;
+  standaloneFees: number;
+  tradingFees: number;
+};
+
+type PerformancePositionRow = PositionPageRow & {
+  realizedGain: number;
+  dividends: number;
+  totalResult: number;
+};
+
+type DatedCashFlow = {
+  date: Date;
+  amount: number;
+};
+
+function performanceLedgerKey(accountId: string, securityId: string) {
+  return `${accountId}|||${securityId}`;
+}
+
+function performanceDate(value: string) {
+  const date = new Date(`${value}T12:00:00`);
+
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function calculateXirrPercent(flows: DatedCashFlow[]) {
+  const validFlows = flows
+    .filter((flow) => Number.isFinite(flow.amount) && !Number.isNaN(flow.date.getTime()))
+    .sort((left, right) => left.date.getTime() - right.date.getTime());
+
+  if (
+    validFlows.length < 2
+    || !validFlows.some((flow) => flow.amount < 0)
+    || !validFlows.some((flow) => flow.amount > 0)
+  ) {
+    return null;
+  }
+
+  const firstDate = validFlows[0].date.getTime();
+
+  function npv(rate: number) {
+    if (rate <= -1) {
+      return Number.POSITIVE_INFINITY;
+    }
+
+    return validFlows.reduce((sum, flow) => {
+      const years =
+        (flow.date.getTime() - firstDate) / (365.25 * 24 * 60 * 60 * 1000);
+
+      return sum + flow.amount / Math.pow(1 + rate, years);
+    }, 0);
+  }
+
+  const candidates = [
+    -0.9999, -0.99, -0.95, -0.9, -0.75, -0.5, -0.25,
+    0, 0.03, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 25, 100, 1_000,
+  ];
+
+  let lower = candidates[0];
+  let lowerValue = npv(lower);
+  let upper: number | null = null;
+
+  for (const candidate of candidates.slice(1)) {
+    const candidateValue = npv(candidate);
+
+    if (Math.abs(candidateValue) < 0.000001) {
+      return candidate * 100;
+    }
+
+    if (
+      Number.isFinite(lowerValue)
+      && Number.isFinite(candidateValue)
+      && Math.sign(lowerValue) !== Math.sign(candidateValue)
+    ) {
+      upper = candidate;
+      break;
+    }
+
+    lower = candidate;
+    lowerValue = candidateValue;
+  }
+
+  if (upper === null) {
+    return null;
+  }
+
+  for (let iteration = 0; iteration < 120; iteration += 1) {
+    const middle = (lower + upper) / 2;
+    const middleValue = npv(middle);
+
+    if (!Number.isFinite(middleValue)) {
+      lower = middle;
+      continue;
+    }
+
+    if (Math.abs(middleValue) < 0.000001) {
+      return middle * 100;
+    }
+
+    if (Math.sign(middleValue) === Math.sign(lowerValue)) {
+      lower = middle;
+      lowerValue = middleValue;
+    } else {
+      upper = middle;
+    }
+  }
+
+  return ((lower + upper) / 2) * 100;
+}
+
+function buildDetailedPerformanceLedger(
+  accounts: DashboardData["accounts"],
+  positions: PositionPageRow[],
+  transactions: DbTransaction[],
+  currentTotal: number,
+) {
+  const includedAccounts = accounts.filter(
+    (account) => account.include_in_net_worth,
+  );
+  const includedAccountIds = new Set(
+    includedAccounts.map((account) => account.id),
+  );
+  const includedPositions = positions.filter((position) =>
+    includedAccountIds.has(position.account_id)
+  );
+
+  const positionStates = new Map<string, PerformanceLedgerPositionState>();
+  const accountRows = new Map<string, PerformanceAccountRow>();
+
+  for (const account of includedAccounts) {
+    accountRows.set(account.id, {
+      accountId: account.id,
+      accountName: account.name,
+      currentValue: account.total_value,
+      deposits: 0,
+      withdrawals: 0,
+      openingCapital: 0,
+      transferBalance: 0,
+      netContributions: 0,
+      totalGain: 0,
+      unrealizedGain: 0,
+      realizedGain: 0,
+      dividends: 0,
+      standaloneFees: 0,
+      tradingFees: 0,
+    });
+  }
+
+  let deposits = 0;
+  let withdrawals = 0;
+  let openingCapital = 0;
+  let dividends = 0;
+  let standaloneFees = 0;
+  let tradingFees = 0;
+  let issueCount = 0;
+  let openingAdjustmentCount = 0;
+  let firstTransactionDate = "";
+  const investorCashFlows: DatedCashFlow[] = [];
+
+  function accountRow(accountId: string | null | undefined) {
+    return accountId ? accountRows.get(accountId) ?? null : null;
+  }
+
+  function stateFor(transaction: DbTransaction) {
+    const accountId = transaction.account_id ?? "";
+    const securityId = transaction.security_id ?? "";
+
+    if (!accountId || !securityId) {
+      return null;
+    }
+
+    const key = performanceLedgerKey(accountId, securityId);
+    const existing = positionStates.get(key);
+
+    if (existing) {
+      return existing;
+    }
+
+    const position = includedPositions.find(
+      (item) =>
+        item.account_id === accountId
+        && item.security_id === securityId
+    );
+
+    const state: PerformanceLedgerPositionState = {
+      accountId,
+      accountName:
+        transaction.account_name
+        ?? position?.account_name
+        ?? accountRow(accountId)?.accountName
+        ?? "Compte inconnu",
+      securityId,
+      securityName:
+        transaction.security_name
+        ?? position?.security_name
+        ?? "Actif inconnu",
+      quantity: 0,
+      averageCost: 0,
+      realizedGain: 0,
+      dividends: 0,
+      tradingFees: 0,
+    };
+
+    positionStates.set(key, state);
+    return state;
+  }
+
+  function pushInvestorFlow(dateValue: string, amount: number) {
+    const date = performanceDate(dateValue);
+
+    if (date && Math.abs(amount) > 0.000001) {
+      investorCashFlows.push({ date, amount });
+    }
+  }
+
+  function addContribution(
+    accountId: string,
+    date: string,
+    amount: number,
+    kind: "deposit" | "opening",
+  ) {
+    if (!Number.isFinite(amount) || Math.abs(amount) <= 0.000001) {
+      return;
+    }
+
+    const row = accountRow(accountId);
+
+    if (amount >= 0) {
+      if (kind === "deposit") row && (row.deposits += amount);
+      if (kind === "opening") row && (row.openingCapital += amount);
+
+      if (kind === "deposit") deposits += amount;
+      if (kind === "opening") openingCapital += amount;
+
+      pushInvestorFlow(date, -amount);
+    } else {
+      const absoluteAmount = Math.abs(amount);
+
+      if (kind === "deposit") row && (row.withdrawals += absoluteAmount);
+      if (kind === "opening") row && (row.openingCapital -= absoluteAmount);
+
+      if (kind === "deposit") withdrawals += absoluteAmount;
+      if (kind === "opening") openingCapital -= absoluteAmount;
+
+      pushInvestorFlow(date, absoluteAmount);
+    }
+  }
+
+  const sortedTransactions = [...transactions].sort((left, right) => {
+    const dateDifference =
+      parsePerformanceDate(left.date) - parsePerformanceDate(right.date);
+
+    return dateDifference !== 0
+      ? dateDifference
+      : left.id.localeCompare(right.id);
+  });
+
+  for (const transaction of sortedTransactions) {
+    if (!firstTransactionDate || transaction.date < firstTransactionDate) {
+      firstTransactionDate = transaction.date;
+    }
+
+    const amount = Number(transaction.amount ?? 0);
+    const quantity = Number(transaction.quantity ?? 0);
+    const price = Number(transaction.price ?? 0);
+    const fees = Number(transaction.fees ?? 0);
+    const accountId = transaction.account_id;
+    const fromAccountId = transaction.from_account_id;
+    const toAccountId = transaction.to_account_id;
+    const accountIncluded = Boolean(
+      accountId && includedAccountIds.has(accountId)
+    );
+    const fromIncluded = Boolean(
+      fromAccountId && includedAccountIds.has(fromAccountId)
+    );
+    const toIncluded = Boolean(
+      toAccountId && includedAccountIds.has(toAccountId)
+    );
+
+    if (transaction.transaction_type === "deposit") {
+      if (toIncluded && toAccountId) {
+        addContribution(toAccountId, transaction.date, amount, "deposit");
+      }
+      continue;
+    }
+
+    if (transaction.transaction_type === "withdrawal") {
+      if (fromIncluded && fromAccountId) {
+        addContribution(fromAccountId, transaction.date, -amount, "deposit");
+      }
+      continue;
+    }
+
+    if (transaction.transaction_type === "transfer") {
+      if (fromIncluded && fromAccountId) {
+        const row = accountRow(fromAccountId);
+        row && (row.transferBalance -= amount);
+      }
+
+      if (toIncluded && toAccountId) {
+        const row = accountRow(toAccountId);
+        row && (row.transferBalance += amount);
+      }
+
+      if (fromIncluded && !toIncluded && fromAccountId) {
+        withdrawals += amount;
+        pushInvestorFlow(transaction.date, amount);
+      } else if (!fromIncluded && toIncluded && toAccountId) {
+        deposits += amount;
+        pushInvestorFlow(transaction.date, -amount);
+      }
+
+      continue;
+    }
+
+    if (transaction.transaction_type === "opening_cash") {
+      if (accountIncluded && accountId) {
+        openingAdjustmentCount += 1;
+        addContribution(accountId, transaction.date, amount, "opening");
+      }
+      continue;
+    }
+
+    if (transaction.transaction_type === "opening_position") {
+      if (!accountIncluded || !accountId) {
+        continue;
+      }
+
+      openingAdjustmentCount += 1;
+      const state = stateFor(transaction);
+      const openingCost = quantity * price;
+
+      if (!state || !Number.isFinite(quantity) || !Number.isFinite(price)) {
+        issueCount += 1;
+        continue;
+      }
+
+      if (quantity > 0) {
+        const previousCost = state.quantity * state.averageCost;
+        const nextQuantity = state.quantity + quantity;
+        state.quantity = nextQuantity;
+        state.averageCost =
+          nextQuantity > 0
+            ? (previousCost + openingCost) / nextQuantity
+            : 0;
+      } else {
+        state.quantity += quantity;
+      }
+
+      addContribution(accountId, transaction.date, openingCost, "opening");
+      continue;
+    }
+
+    if (transaction.transaction_type === "buy") {
+      if (!accountIncluded || !accountId) {
+        continue;
+      }
+
+      const state = stateFor(transaction);
+
+      if (!state || quantity <= 0 || price <= 0) {
+        issueCount += 1;
+        continue;
+      }
+
+      const totalCost = quantity * price + fees;
+      const previousCost = state.quantity * state.averageCost;
+      const nextQuantity = state.quantity + quantity;
+
+      state.quantity = nextQuantity;
+      state.averageCost =
+        nextQuantity > 0 ? (previousCost + totalCost) / nextQuantity : 0;
+      state.tradingFees += fees;
+      tradingFees += fees;
+
+      const row = accountRow(accountId);
+      if (row) row.tradingFees += fees;
+      continue;
+    }
+
+    if (transaction.transaction_type === "sell") {
+      if (!accountIncluded || !accountId) {
+        continue;
+      }
+
+      const state = stateFor(transaction);
+
+      if (!state || quantity <= 0 || price <= 0) {
+        issueCount += 1;
+        continue;
+      }
+
+      if (quantity > state.quantity + 0.000001) {
+        issueCount += 1;
+      }
+
+      const soldQuantity = Math.min(quantity, Math.max(state.quantity, 0));
+      const soldCost = soldQuantity * state.averageCost;
+      const proceeds = quantity * price - fees;
+      const realizedGain = proceeds - soldCost;
+
+      state.quantity = Math.max(state.quantity - quantity, 0);
+      state.realizedGain += realizedGain;
+      state.tradingFees += fees;
+      tradingFees += fees;
+
+      const row = accountRow(accountId);
+      if (row) {
+        row.realizedGain += realizedGain;
+        row.tradingFees += fees;
+      }
+      continue;
+    }
+
+    if (transaction.transaction_type === "dividend") {
+      const dividendAccountId =
+        accountId ?? toAccountId ?? null;
+
+      if (
+        !dividendAccountId
+        || !includedAccountIds.has(dividendAccountId)
+      ) {
+        continue;
+      }
+
+      dividends += amount;
+      const row = accountRow(dividendAccountId);
+      if (row) row.dividends += amount;
+
+      const state = stateFor({
+        ...transaction,
+        account_id: dividendAccountId,
+      });
+
+      if (state) state.dividends += amount;
+      continue;
+    }
+
+    if (transaction.transaction_type === "fee") {
+      const feeAccountId = accountId ?? fromAccountId ?? null;
+
+      if (!feeAccountId || !includedAccountIds.has(feeAccountId)) {
+        continue;
+      }
+
+      standaloneFees += amount;
+      const row = accountRow(feeAccountId);
+      if (row) row.standaloneFees += amount;
+    }
+  }
+
+  const currentCostBasis = includedPositions.reduce(
+    (sum, position) => sum + position.cost,
+    0,
+  );
+  const unrealizedGain = includedPositions.reduce(
+    (sum, position) => sum + position.performance_amount,
+    0,
+  );
+  const realizedGain = [...positionStates.values()].reduce(
+    (sum, state) => sum + state.realizedGain,
+    0,
+  );
+  const netContributions = openingCapital + deposits - withdrawals;
+  const totalGain = currentTotal - netContributions;
+  const totalGainPercent =
+    netContributions > 0 ? (totalGain / netContributions) * 100 : 0;
+  const explainedGain =
+    realizedGain + unrealizedGain + dividends - standaloneFees;
+  const unexplainedDifference = totalGain - explainedGain;
+
+  if (currentTotal > 0) {
+    investorCashFlows.push({ date: new Date(), amount: currentTotal });
+  }
+
+  const xirrPercent = calculateXirrPercent(investorCashFlows);
+
+  for (const position of includedPositions) {
+    const row = accountRow(position.account_id);
+    if (row) row.unrealizedGain += position.performance_amount;
+  }
+
+  const detailedPositionRows: PerformancePositionRow[] = includedPositions
+    .map((position) => {
+      const state = positionStates.get(
+        performanceLedgerKey(position.account_id, position.security_id),
+      );
+      const positionRealizedGain = state?.realizedGain ?? 0;
+      const positionDividends = state?.dividends ?? 0;
+
+      return {
+        ...position,
+        realizedGain: positionRealizedGain,
+        dividends: positionDividends,
+        totalResult:
+          position.performance_amount
+          + positionRealizedGain
+          + positionDividends,
+      };
+    })
+    .sort((left, right) => right.totalResult - left.totalResult);
+
+  const detailedAccountRows = [...accountRows.values()]
+    .map((row) => {
+      const netAccountContributions =
+        row.openingCapital
+        + row.deposits
+        - row.withdrawals
+        + row.transferBalance;
+
+      return {
+        ...row,
+        netContributions: netAccountContributions,
+        totalGain: row.currentValue - netAccountContributions,
+      };
+    })
+    .sort((left, right) => right.currentValue - left.currentValue);
+
+  return {
+    currentCostBasis,
+    deposits,
+    withdrawals,
+    openingCapital,
+    netContributions,
+    totalGain,
+    totalGainPercent,
+    unrealizedGain,
+    realizedGain,
+    dividends,
+    standaloneFees,
+    tradingFees,
+    totalFees: standaloneFees + tradingFees,
+    explainedGain,
+    unexplainedDifference,
+    xirrPercent,
+    issueCount,
+    openingAdjustmentCount,
+    firstTransactionDate,
+    positionRows: detailedPositionRows,
+    accountRows: detailedAccountRows,
+  };
+}
+
 function PerformancePage({
+  accounts,
   isPrivacyMode,
   positions,
   snapshots,
   summary,
   transactions,
 }: {
+  accounts: DashboardData["accounts"];
   isPrivacyMode: boolean;
   positions: PositionPageRow[];
   snapshots: DashboardData["snapshots"];
-  summary: { total: number; performance_amount: number; performance_percent: number; start_date: string };
+  summary: {
+    total: number;
+    performance_amount: number;
+    performance_percent: number;
+    start_date: string;
+  };
   transactions: DbTransaction[];
 }) {
-  const positionsValue = positions.reduce((sum, position) => sum + position.value, 0);
-  const investedCapital = positions.reduce((sum, position) => sum + position.cost, 0);
-  const latentPerformance = positions.reduce((sum, position) => sum + position.performance_amount, 0);
-  const latentPerformancePercent = investedCapital > 0 ? (latentPerformance / investedCapital) * 100 : 0;
-  const cashValue = Math.max(summary.total - positionsValue, 0);
-  const sortedByValue = [...positions].sort((left, right) => right.value - left.value);
-  const topPosition = sortedByValue[0] ?? null;
-  const topPositionWeight = topPosition && summary.total > 0 ? (topPosition.value / summary.total) * 100 : 0;
-  const winners = [...positions].sort((left, right) => right.performance_amount - left.performance_amount).slice(0, 3);
-  const losers = [...positions].sort((left, right) => left.performance_amount - right.performance_amount).slice(0, 3);
-  const performanceAnalytics = buildPerformanceAnalytics(summary.total, snapshots, transactions);
-  const classPerformanceRows = buildPerformanceBreakdown(positions, summary.total, "asset_class");
-  const accountPerformanceRows = buildPerformanceBreakdown(positions, summary.total, "account_name");
-  const linePerformanceRows = [...positions].sort((left, right) => right.performance_amount - left.performance_amount);
+  const ledger = buildDetailedPerformanceLedger(
+    accounts,
+    positions,
+    transactions,
+    summary.total,
+  );
+  const performanceAnalytics = buildPerformanceAnalytics(
+    summary.total,
+    snapshots,
+    transactions,
+  );
+  const classPerformanceRows = buildPerformanceBreakdown(
+    ledger.positionRows,
+    summary.total,
+    "asset_class",
+  );
+  const xirrText =
+    ledger.xirrPercent === null
+      ? "—"
+      : formatSignedPercent(ledger.xirrPercent);
+  const discrepancyIsMaterial =
+    Math.abs(ledger.unexplainedDifference) > 0.02;
+  const dataQualityLabel =
+    ledger.issueCount === 0 && !discrepancyIsMaterial
+      ? "Cohérent"
+      : "À vérifier";
 
   return (
-    <section className="page">
-      <div className="title-block">
-        <h1>Performance</h1>
-        <p>Analyse des résultats, du capital investi, de la plus-value latente et des poids du portefeuille.</p>
+    <section className="page performance-engine-page">
+      <div className="title-block page-title-row">
+        <div>
+          <h1>Performance</h1>
+          <p>
+            Résultats calculés depuis les transactions, les PRU et les cours
+            actuels des positions.
+          </p>
+        </div>
+
+        <span
+          className={
+            dataQualityLabel === "Cohérent"
+              ? "status-pill connected"
+              : "status-pill warning"
+          }
+        >
+          {dataQualityLabel}
+        </span>
       </div>
 
-      <div className="transaction-summary-grid performance-summary-grid">
-        <MetricCard label="Capital investi" value={displayEuro(investedCapital, isPrivacyMode)} note="prix de revient positions" />
-        <MetricCard label="Valeur positions" value={displayEuro(positionsValue, isPrivacyMode)} note="hors cash" />
-        <MetricCard label="Plus-value latente" value={displayEuro(latentPerformance, isPrivacyMode)} note={formatSignedPercent(latentPerformancePercent)} />
-        <MetricCard label="TWR estimé" value={formatSignedPercent(performanceAnalytics.twrPercent)} note="hors apports/retraits" />
-        <MetricCard label="Cash estimé" value={displayEuro(cashValue, isPrivacyMode)} note="total - positions" />
-        <MetricCard label="Concentration max." value={topPosition ? formatUnsignedPercent(topPositionWeight) : "—"} note={topPosition?.security_name ?? "aucune position"} />
+      <article className="card performance-price-explanation">
+        <div>
+          <span>Principe de calcul</span>
+          <h2>Prix d’achat et cours actuel restent indépendants</h2>
+          <p>
+            Le prix enregistré dans un achat reste le prix réellement payé à
+            cette date. Le PRU est calculé à partir de ces achats et de leurs
+            frais. Le cours actuel vient du dernier cours disponible et sert
+            uniquement à valoriser la position aujourd’hui.
+          </p>
+        </div>
+
+        <div className="performance-price-formula">
+          <strong>Plus-value latente</strong>
+          <span>Quantité × (cours actuel − PRU)</span>
+        </div>
+      </article>
+
+      <div className="transaction-summary-grid performance-engine-summary">
+        <MetricCard
+          label="Patrimoine actuel"
+          value={displayEuro(summary.total, isPrivacyMode)}
+          note="positions au cours actuel + cash"
+        />
+        <MetricCard
+          label="Apports nets"
+          value={displayEuro(ledger.netContributions, isPrivacyMode)}
+          note="ouvertures + dépôts − retraits"
+        />
+        <MetricCard
+          label="Gain total"
+          value={displayEuro(ledger.totalGain, isPrivacyMode)}
+          note={formatSignedPercent(ledger.totalGainPercent)}
+        />
+        <MetricCard
+          label="Rendement personnel"
+          value={xirrText}
+          note="XIRR annualisé selon les flux"
+        />
+        <MetricCard
+          label="Plus-value latente"
+          value={displayEuro(ledger.unrealizedGain, isPrivacyMode)}
+          note="positions encore ouvertes"
+        />
+        <MetricCard
+          label="Plus-value réalisée"
+          value={displayEuro(ledger.realizedGain, isPrivacyMode)}
+          note="ventes nettes des coûts"
+        />
+        <MetricCard
+          label="Dividendes"
+          value={displayEuro(ledger.dividends, isPrivacyMode)}
+          note="revenus encaissés"
+        />
+        <MetricCard
+          label="Frais enregistrés"
+          value={displayEuro(ledger.totalFees, isPrivacyMode)}
+          note="ordres + frais autonomes"
+        />
       </div>
 
-      <div className="performance-grid">
-        <article className="card performance-chart-card">
+      <div className="performance-engine-grid">
+        <article className="card performance-chart-card performance-engine-chart">
           <div className="card-header">
-            <h2>Patrimoine dans le temps</h2>
-            <span className="status-pill connected">Depuis le début</span>
+            <div>
+              <h2>Patrimoine dans le temps</h2>
+              <p className="muted">
+                Valeur brute enregistrée dans les snapshots.
+              </p>
+            </div>
+            <span className="status-pill connected">
+              {snapshots.length} point(s)
+            </span>
           </div>
 
-          <PortfolioChart period="all"
-            snapshots={snapshots} currentTotal={summary.total} isPrivacyMode={isPrivacyMode} />
+          <PortfolioChart
+            period="all"
+            snapshots={snapshots}
+            currentTotal={summary.total}
+            isPrivacyMode={isPrivacyMode}
+          />
+        </article>
+
+        <article className="card performance-composition-card">
+          <h2>Origine de la performance</h2>
+          <p className="muted">
+            Les frais d’ordres sont déjà intégrés au PRU et aux ventes. Les
+            frais autonomes sont déduits séparément.
+          </p>
+
+          <div className="performance-composition-list">
+            <div>
+              <span>Latent</span>
+              <strong className={ledger.unrealizedGain >= 0 ? "positive" : "negative"}>
+                {displayEuro(ledger.unrealizedGain, isPrivacyMode)}
+              </strong>
+            </div>
+            <div>
+              <span>Réalisé</span>
+              <strong className={ledger.realizedGain >= 0 ? "positive" : "negative"}>
+                {displayEuro(ledger.realizedGain, isPrivacyMode)}
+              </strong>
+            </div>
+            <div>
+              <span>Dividendes</span>
+              <strong className="positive">
+                {displayEuro(ledger.dividends, isPrivacyMode)}
+              </strong>
+            </div>
+            <div>
+              <span>Frais autonomes</span>
+              <strong className="negative">
+                − {displayEuro(ledger.standaloneFees, isPrivacyMode)}
+              </strong>
+            </div>
+            <div className="performance-composition-total">
+              <span>Performance expliquée</span>
+              <strong className={ledger.explainedGain >= 0 ? "positive" : "negative"}>
+                {displayEuro(ledger.explainedGain, isPrivacyMode)}
+              </strong>
+            </div>
+          </div>
+
+          {discrepancyIsMaterial ? (
+            <p className="performance-engine-warning">
+              Écart non expliqué :{" "}
+              {displayEuro(ledger.unexplainedDifference, isPrivacyMode)}.
+              Il provient généralement d’un historique incomplet, d’un cash
+              initial manquant ou d’un ajustement d’ouverture.
+            </p>
+          ) : (
+            <p className="performance-engine-ok">
+              Le gain total est cohérent avec les opérations enregistrées.
+            </p>
+          )}
         </article>
 
         <article className="card performance-card">
-          <h2>Rendement hors apports</h2>
-          <p className="muted">TWR estimé à partir des snapshots et des flux externes.</p>
+          <div className="card-header">
+            <div>
+              <h2>TWR estimé</h2>
+              <p className="muted">
+                Rendement du portefeuille en neutralisant les apports et
+                retraits.
+              </p>
+            </div>
+            <strong>{formatSignedPercent(performanceAnalytics.twrPercent)}</strong>
+          </div>
 
           <PerformanceMiniChart
             data={performanceAnalytics.twrSeries}
-            emptyMessage="Pas assez de snapshots pour calculer un TWR."
+            emptyMessage="Il faut plusieurs snapshots pour calculer un TWR."
             formatter={formatSignedPercent}
           />
         </article>
 
         <article className="card performance-card">
           <h2>Apports nets cumulés</h2>
-          <p className="muted">Dépôts moins retraits. Les transferts internes sont ignorés.</p>
+          <p className="muted">
+            Dépôts et retraits externes. Les transferts entre comptes inclus
+            sont ignorés.
+          </p>
 
           <PerformanceMiniChart
             data={performanceAnalytics.externalFlowSeries}
@@ -2893,163 +3626,199 @@ function PerformancePage({
           />
         </article>
 
+        <article className="card performance-quality-card">
+          <h2>Qualité de l’historique</h2>
 
-        <article className="card performance-card">
-          <h2>Top gagnants</h2>
-
-          <div className="ranking-list">
-            {winners.map((position) => (
-              <div className="ranking-line" key={position.position_id}>
-                <div>
-                  <strong>{position.security_name}</strong>
-                  <span>{position.account_name}</span>
-                </div>
-                <p className="positive">
-                  {displayEuro(position.performance_amount, isPrivacyMode)}
-                  <small>{formatSignedPercent(position.performance_percent)}</small>
-                </p>
-              </div>
-            ))}
+          <div className="performance-quality-list">
+            <div>
+              <span>Début détecté</span>
+              <strong>
+                {ledger.firstTransactionDate
+                  ? formatDate(ledger.firstTransactionDate)
+                  : "—"}
+              </strong>
+            </div>
+            <div>
+              <span>Ajustements d’ouverture</span>
+              <strong>{ledger.openingAdjustmentCount}</strong>
+            </div>
+            <div>
+              <span>Anomalies de journal</span>
+              <strong>{ledger.issueCount}</strong>
+            </div>
+            <div>
+              <span>Snapshots</span>
+              <strong>{snapshots.length}</strong>
+            </div>
+            <div>
+              <span>Coût restant</span>
+              <strong>{displayEuro(ledger.currentCostBasis, isPrivacyMode)}</strong>
+            </div>
+            <div>
+              <span>Frais d’ordres</span>
+              <strong>{displayEuro(ledger.tradingFees, isPrivacyMode)}</strong>
+            </div>
           </div>
         </article>
+      </div>
 
-        <article className="card performance-card">
-          <h2>Top perdants</h2>
-
-          <div className="ranking-list">
-            {losers.map((position) => (
-              <div className="ranking-line" key={position.position_id}>
-                <div>
-                  <strong>{position.security_name}</strong>
-                  <span>{position.account_name}</span>
-                </div>
-                <p className={position.performance_amount >= 0 ? "positive" : "negative"}>
-                  {displayEuro(position.performance_amount, isPrivacyMode)}
-                  <small>{formatSignedPercent(position.performance_percent)}</small>
-                </p>
-              </div>
-            ))}
+      <article className="card performance-wide-card performance-engine-table-card">
+        <div className="card-header">
+          <div>
+            <h2>Positions ouvertes : PRU contre cours actuel</h2>
+            <p className="muted">
+              Le PRU reflète les achats historiques. Le cours actuel valorise
+              la position aujourd’hui.
+            </p>
           </div>
-        </article>
+          <span className="status-pill connected">
+            {ledger.positionRows.length} position(s)
+          </span>
+        </div>
 
-        <article className="card performance-wide-card">
-          <div className="card-header">
-            <h2>Performance par classe</h2>
-            <span className="status-pill connected">Latent</span>
-          </div>
-
-          <table className="performance-breakdown-table">
-            <thead>
-              <tr>
-                <th>Classe</th>
-                <th>Lignes</th>
-                <th>Valeur</th>
-                <th>Prix de revient</th>
-                <th>Perf.</th>
-                <th>Perf. %</th>
-                <th>Poids</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {classPerformanceRows.map((row) => (
-                <tr key={row.label}>
-                  <td>{row.label}</td>
-                  <td>{row.count}</td>
-                  <td>{displayEuro(row.value, isPrivacyMode)}</td>
-                  <td>{displayEuro(row.cost, isPrivacyMode)}</td>
-                  <td className={row.performanceAmount >= 0 ? "positive" : "negative"}>{displayEuro(row.performanceAmount, isPrivacyMode)}</td>
-                  <td className={row.performanceAmount >= 0 ? "positive" : "negative"}>{formatSignedPercent(row.performancePercent)}</td>
-                  <td>{formatUnsignedPercent(row.weight)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </article>
-
-        <article className="card performance-wide-card">
-          <div className="card-header">
-            <h2>Performance par compte</h2>
-            <span className="status-pill connected">Enveloppes</span>
-          </div>
-
-          <table className="performance-breakdown-table">
-            <thead>
-              <tr>
-                <th>Compte</th>
-                <th>Lignes</th>
-                <th>Valeur</th>
-                <th>Prix de revient</th>
-                <th>Perf.</th>
-                <th>Perf. %</th>
-                <th>Poids</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {accountPerformanceRows.map((row) => (
-                <tr key={row.label}>
-                  <td>{row.label}</td>
-                  <td>{row.count}</td>
-                  <td>{displayEuro(row.value, isPrivacyMode)}</td>
-                  <td>{displayEuro(row.cost, isPrivacyMode)}</td>
-                  <td className={row.performanceAmount >= 0 ? "positive" : "negative"}>{displayEuro(row.performanceAmount, isPrivacyMode)}</td>
-                  <td className={row.performanceAmount >= 0 ? "positive" : "negative"}>{formatSignedPercent(row.performancePercent)}</td>
-                  <td>{formatUnsignedPercent(row.weight)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </article>
-
-        <article className="card performance-wide-card">
-          <div className="card-header">
-            <h2>Performance par ligne</h2>
-            <span className="status-pill connected">{linePerformanceRows.length} ligne(s)</span>
-          </div>
-
-          <table className="performance-breakdown-table">
+        <div className="performance-engine-table-scroll">
+          <table className="performance-breakdown-table performance-engine-table">
             <thead>
               <tr>
                 <th>Actif</th>
                 <th>Compte</th>
-                <th>Classe</th>
+                <th>Quantité</th>
+                <th>PRU</th>
+                <th>Cours actuel</th>
                 <th>Valeur</th>
-                <th>Prix de revient</th>
-                <th>Perf.</th>
-                <th>Perf. %</th>
-                <th>Poids</th>
+                <th>Latent</th>
+                <th>Réalisé</th>
+                <th>Dividendes</th>
+                <th>Résultat total</th>
               </tr>
             </thead>
 
             <tbody>
-              {linePerformanceRows.map((position) => {
-                const weight = summary.total > 0 ? (position.value / summary.total) * 100 : 0;
-
-                return (
-                  <tr key={position.position_id}>
-                    <td>{position.security_name}</td>
-                    <td>{position.account_name}</td>
-                    <td>{position.asset_class}</td>
-                    <td>{displayEuro(position.value, isPrivacyMode)}</td>
-                    <td>{displayEuro(position.cost, isPrivacyMode)}</td>
-                    <td className={position.performance_amount >= 0 ? "positive" : "negative"}>{displayEuro(position.performance_amount, isPrivacyMode)}</td>
-                    <td className={position.performance_amount >= 0 ? "positive" : "negative"}>{formatSignedPercent(position.performance_percent)}</td>
-                    <td>{formatUnsignedPercent(weight)}</td>
-                  </tr>
-                );
-              })}
+              {ledger.positionRows.map((position) => (
+                <tr key={position.position_id}>
+                  <td>
+                    <strong>{position.security_name}</strong>
+                    <small>{position.ticker} · {position.asset_class}</small>
+                  </td>
+                  <td>{position.account_name}</td>
+                  <td>{formatQuantity(position.quantity)}</td>
+                  <td>{displayEuro(position.average_price, isPrivacyMode)}</td>
+                  <td>{displayEuro(position.current_price, isPrivacyMode)}</td>
+                  <td>{displayEuro(position.value, isPrivacyMode)}</td>
+                  <td className={position.performance_amount >= 0 ? "positive" : "negative"}>
+                    {displayEuro(position.performance_amount, isPrivacyMode)}
+                    <small>{formatSignedPercent(position.performance_percent)}</small>
+                  </td>
+                  <td className={position.realizedGain >= 0 ? "positive" : "negative"}>
+                    {displayEuro(position.realizedGain, isPrivacyMode)}
+                  </td>
+                  <td>{displayEuro(position.dividends, isPrivacyMode)}</td>
+                  <td className={position.totalResult >= 0 ? "positive" : "negative"}>
+                    {displayEuro(position.totalResult, isPrivacyMode)}
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
-        </article>
+        </div>
+      </article>
 
+      <article className="card performance-wide-card performance-engine-table-card">
+        <div className="card-header">
+          <div>
+            <h2>Résultat par compte</h2>
+            <p className="muted">
+              Les transferts entre comptes sont intégrés au compte concerné,
+              mais restent neutres pour le portefeuille global.
+            </p>
+          </div>
+        </div>
 
-      </div>
+        <div className="performance-engine-table-scroll">
+          <table className="performance-breakdown-table performance-engine-table">
+            <thead>
+              <tr>
+                <th>Compte</th>
+                <th>Valeur actuelle</th>
+                <th>Apports nets</th>
+                <th>Gain total</th>
+                <th>Latent</th>
+                <th>Réalisé</th>
+                <th>Dividendes</th>
+                <th>Frais</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {ledger.accountRows.map((account) => (
+                <tr key={account.accountId}>
+                  <td>{account.accountName}</td>
+                  <td>{displayEuro(account.currentValue, isPrivacyMode)}</td>
+                  <td>{displayEuro(account.netContributions, isPrivacyMode)}</td>
+                  <td className={account.totalGain >= 0 ? "positive" : "negative"}>
+                    {displayEuro(account.totalGain, isPrivacyMode)}
+                  </td>
+                  <td className={account.unrealizedGain >= 0 ? "positive" : "negative"}>
+                    {displayEuro(account.unrealizedGain, isPrivacyMode)}
+                  </td>
+                  <td className={account.realizedGain >= 0 ? "positive" : "negative"}>
+                    {displayEuro(account.realizedGain, isPrivacyMode)}
+                  </td>
+                  <td>{displayEuro(account.dividends, isPrivacyMode)}</td>
+                  <td>{displayEuro(account.standaloneFees + account.tradingFees, isPrivacyMode)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </article>
+
+      <article className="card performance-wide-card performance-engine-table-card">
+        <div className="card-header">
+          <div>
+            <h2>Plus-value latente par classe</h2>
+            <p className="muted">
+              Cette table porte uniquement sur les positions encore ouvertes.
+            </p>
+          </div>
+          <span className="status-pill connected">Cours actuels</span>
+        </div>
+
+        <table className="performance-breakdown-table">
+          <thead>
+            <tr>
+              <th>Classe</th>
+              <th>Lignes</th>
+              <th>Valeur</th>
+              <th>Prix de revient</th>
+              <th>Perf.</th>
+              <th>Perf. %</th>
+              <th>Poids</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {classPerformanceRows.map((row) => (
+              <tr key={row.label}>
+                <td>{row.label}</td>
+                <td>{row.count}</td>
+                <td>{displayEuro(row.value, isPrivacyMode)}</td>
+                <td>{displayEuro(row.cost, isPrivacyMode)}</td>
+                <td className={row.performanceAmount >= 0 ? "positive" : "negative"}>
+                  {displayEuro(row.performanceAmount, isPrivacyMode)}
+                </td>
+                <td className={row.performanceAmount >= 0 ? "positive" : "negative"}>
+                  {formatSignedPercent(row.performancePercent)}
+                </td>
+                <td>{formatUnsignedPercent(row.weight)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </article>
     </section>
   );
 }
-
-
 
 type ChartPeriod = "1m" | "6m" | "1y" | "all";
 
@@ -5213,11 +5982,40 @@ function MissingAssetCard({
   const [isin, setIsin] = useState(reference.isin);
   const [assetClass, setAssetClass] = useState<NewSecurityInput["asset_class"]>(reference.assetClass);
   const [currency, setCurrency] = useState(reference.currency);
-  const [currentPrice, setCurrentPrice] = useState(
-    reference.currentPrice > 0 ? formatInputDecimal(reference.currentPrice) : "0",
-  );
+  const [currentPrice, setCurrentPrice] = useState("0");
   const [isCreating, setIsCreating] = useState(false);
+  const [isLoadingQuote, setIsLoadingQuote] = useState(false);
+  const [quoteMessage, setQuoteMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  async function handleLookupCurrentPrice() {
+    const symbol = ticker.trim();
+
+    if (!symbol || symbol.toUpperCase() === isin.trim().toUpperCase()) {
+      setError(
+        "Indique un ticker de marché pour récupérer le cours, ou saisis le cours actuel manuellement.",
+      );
+      return;
+    }
+
+    setIsLoadingQuote(true);
+    setError(null);
+    setQuoteMessage(null);
+
+    try {
+      const quote = await lookupOnlineAssetQuote(symbol);
+      setCurrentPrice(formatInputDecimal(quote.price));
+      setQuoteMessage(
+        `Cours récupéré : ${formatEuro(quote.price)} via ${quote.source} (${quote.used_symbol}).`,
+      );
+    } catch (quoteError) {
+      setError(
+        `Cours en ligne introuvable. Saisis le cours actuel manuellement. ${String(quoteError)}`,
+      );
+    } finally {
+      setIsLoadingQuote(false);
+    }
+  }
 
   async function handleCreate() {
     const parsedPrice = parseDecimal(currentPrice || "0");
@@ -5310,15 +6108,42 @@ function MissingAssetCard({
         </label>
       </div>
 
+      {quoteMessage ? <p className="form-success">{quoteMessage}</p> : null}
       {error ? <p className="form-error">{error}</p> : null}
+
+      <div className="csv-missing-asset-price-note">
+        <strong>Prix de l’opération : {formatEuro(reference.currentPrice)}</strong>
+        <span>
+          Ce prix historique servira à la transaction et au PRU. Il ne remplace jamais
+          le cours actuel de l’actif.
+        </span>
+      </div>
 
       <div className="csv-missing-asset-actions">
         <small>
-          Un cours à 0 est accepté. Le premier achat importé donnera alors une valeur initiale à la position.
+          Récupère le cours actuel en ligne ou saisis-le manuellement. Le prix de
+          l’opération ne sera jamais utilisé comme cours actuel.
         </small>
-        <button className="secondary-action" disabled={isCreating} onClick={handleCreate} type="button">
-          {isCreating ? "Création..." : "Créer cet actif"}
-        </button>
+
+        <div>
+          <button
+            className="secondary-action"
+            disabled={isCreating || isLoadingQuote}
+            onClick={handleLookupCurrentPrice}
+            type="button"
+          >
+            {isLoadingQuote ? "Recherche du cours..." : "Récupérer le cours actuel"}
+          </button>
+
+          <button
+            className="secondary-action"
+            disabled={isCreating || isLoadingQuote}
+            onClick={handleCreate}
+            type="button"
+          >
+            {isCreating ? "Création..." : "Créer cet actif"}
+          </button>
+        </div>
       </div>
     </article>
   );
