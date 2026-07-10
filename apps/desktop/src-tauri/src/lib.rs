@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::env;
+use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Serialize, Clone)]
@@ -92,6 +94,7 @@ struct DbTransaction {
     from_account_name: Option<String>,
     to_account_name: Option<String>,
     security_name: Option<String>,
+    security_ticker: Option<String>,
     amount: f64,
     quantity: Option<f64>,
     price: Option<f64>,
@@ -183,6 +186,8 @@ struct PriceUpdateSummary {
 #[derive(Debug, Serialize)]
 struct PositionPageRow {
     position_id: String,
+    account_id: String,
+    security_id: String,
     account_name: String,
     security_name: String,
     ticker: String,
@@ -1217,6 +1222,7 @@ fn get_transactions() -> Result<Vec<DbTransaction>, String> {
               from_account.name AS from_account_name,
               to_account.name AS to_account_name,
               s.name AS security_name,
+              s.ticker AS security_ticker,
               t.amount,
               t.quantity,
               t.price,
@@ -1246,11 +1252,12 @@ fn get_transactions() -> Result<Vec<DbTransaction>, String> {
                 from_account_name: row.get(8)?,
                 to_account_name: row.get(9)?,
                 security_name: row.get(10)?,
-                amount: row.get(11)?,
-                quantity: row.get(12)?,
-                price: row.get(13)?,
-                fees: row.get(14)?,
-                note: row.get(15)?,
+                security_ticker: row.get(11)?,
+                amount: row.get(12)?,
+                quantity: row.get(13)?,
+                price: row.get(14)?,
+                fees: row.get(15)?,
+                note: row.get(16)?,
             })
         })
         .map_err(|error| format!("Erreur lecture transactions : {error}"))?;
@@ -1471,7 +1478,9 @@ fn get_positions_page() -> Result<Vec<PositionPageRow>, String> {
               CASE
                 WHEN pus.status IN ('kept', 'error') THEN pus.message
                 ELSE NULL
-              END AS price_error
+              END AS price_error,
+              p.account_id,
+              p.security_id
             FROM positions p
             JOIN securities s ON s.id = p.security_id
             JOIN accounts a ON a.id = p.account_id
@@ -1514,6 +1523,8 @@ fn get_positions_page() -> Result<Vec<PositionPageRow>, String> {
 
             Ok(PositionPageRow {
                 position_id: row.get(0)?,
+                account_id: row.get(14)?,
+                security_id: row.get(15)?,
                 account_name: row.get(1)?,
                 security_name: row.get(2)?,
                 ticker: row.get(3)?,
@@ -2253,6 +2264,26 @@ fn adjust_position_quantity_and_cost(
     Ok(())
 }
 
+fn position_quantity_for_trade(
+    transaction: &rusqlite::Transaction,
+    account_id: &str,
+    security_id: &str,
+) -> Result<f64, String> {
+    transaction
+        .query_row(
+            "
+            SELECT quantity
+            FROM positions
+            WHERE account_id = ?1 AND security_id = ?2
+            ",
+            params![account_id, security_id],
+            |row| row.get::<_, f64>(0),
+        )
+        .optional()
+        .map(|quantity| quantity.unwrap_or(0.0))
+        .map_err(|error| format!("Erreur lecture quantité disponible {security_id} : {error}"))
+}
+
 fn apply_stored_transaction_effect(
     transaction: &rusqlite::Transaction,
     stored: &StoredTransaction,
@@ -2344,6 +2375,18 @@ fn apply_stored_transaction_effect(
             let price = stored
                 .price
                 .ok_or_else(|| "Prix manquant pour la vente.".to_string())?;
+
+            if sign > 0.0 {
+                let available_quantity =
+                    position_quantity_for_trade(transaction, account_id, security_id)?;
+
+                if quantity > available_quantity + 0.0000001 {
+                    return Err(format!(
+                        "Vente impossible : quantité disponible {available_quantity:.4}, quantité demandée {quantity:.4}."
+                    ));
+                }
+            }
+
             let gross_amount = quantity * price;
             let cash_amount = gross_amount - stored.fees;
 
@@ -3284,6 +3327,123 @@ fn create_cash_transaction(input: NewCashTransaction) -> Result<String, String> 
     Ok(id)
 }
 
+fn atlas_download_directory() -> Result<PathBuf, String> {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(output) = Command::new("xdg-user-dir").arg("DOWNLOAD").output() {
+            if output.status.success() {
+                let directory = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+                if !directory.is_empty() {
+                    let path = PathBuf::from(directory);
+
+                    fs::create_dir_all(&path).map_err(|error| {
+                        format!("Impossible de créer le dossier de téléchargement : {error}")
+                    })?;
+
+                    return Ok(path);
+                }
+            }
+        }
+    }
+
+    let home = env::var("HOME")
+        .or_else(|_| env::var("USERPROFILE"))
+        .map(PathBuf::from)
+        .map_err(|_| "Impossible de trouver le dossier personnel.".to_string())?;
+
+    let candidates = [home.join("Downloads"), home.join("Téléchargements")];
+
+    for candidate in candidates {
+        if candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+
+    let fallback = home.join("Downloads");
+
+    fs::create_dir_all(&fallback)
+        .map_err(|error| format!("Impossible de créer le dossier Downloads : {error}"))?;
+
+    Ok(fallback)
+}
+
+fn sanitize_csv_filename(filename: &str) -> String {
+    let raw_name = PathBuf::from(filename.trim())
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("atlas-export.csv")
+        .to_string();
+
+    let mut sanitized = raw_name
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+
+    if sanitized.is_empty() {
+        sanitized = "atlas-export.csv".to_string();
+    }
+
+    if !sanitized.to_ascii_lowercase().ends_with(".csv") {
+        sanitized.push_str(".csv");
+    }
+
+    sanitized
+}
+
+fn unique_csv_export_path(directory: &PathBuf, filename: &str) -> PathBuf {
+    let first_path = directory.join(filename);
+
+    if !first_path.exists() {
+        return first_path;
+    }
+
+    let stem = filename
+        .strip_suffix(".csv")
+        .or_else(|| filename.strip_suffix(".CSV"))
+        .unwrap_or(filename);
+
+    for index in 2..=9999 {
+        let candidate = directory.join(format!("{stem}-{index}.csv"));
+
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+
+    directory.join(format!(
+        "{stem}-{}.csv",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis())
+            .unwrap_or(0)
+    ))
+}
+
+#[tauri::command]
+fn save_csv_file(filename: String, content: String) -> Result<String, String> {
+    let directory = atlas_download_directory()?;
+    let safe_filename = sanitize_csv_filename(&filename);
+    let path = unique_csv_export_path(&directory, &safe_filename);
+
+    let csv_content = if content.starts_with('\u{feff}') {
+        content
+    } else {
+        format!("\u{feff}{content}")
+    };
+
+    fs::write(&path, csv_content.as_bytes())
+        .map_err(|error| format!("Impossible d’enregistrer le CSV : {error}"))?;
+
+    Ok(path.display().to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -3307,6 +3467,7 @@ pub fn run() {
             delete_transaction,
             create_opening_position_adjustments,
             create_opening_cash_adjustments,
+            save_csv_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

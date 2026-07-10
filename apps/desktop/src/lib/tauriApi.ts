@@ -77,6 +77,7 @@ export type DbTransaction = {
   from_account_name: string | null;
   to_account_name: string | null;
   security_name: string | null;
+  security_ticker: string | null;
   amount: number;
   quantity: number | null;
   price: number | null;
@@ -176,6 +177,8 @@ export type PriceUpdateSummary = {
 
 export type PositionPageRow = {
   position_id: string;
+  account_id: string;
+  security_id: string;
   account_name: string;
   security_name: string;
   ticker: string;

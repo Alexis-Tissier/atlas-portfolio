@@ -1,4 +1,5 @@
 import { Fragment, FormEvent, useEffect, useState, useRef } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 import { monthlyContribution } from "./mocks/mockPortfolio";
 import { formatEuro, getAllocationRows, getPositionRows, getPortfolioSummary } from "./core/portfolioCalculations";
@@ -4670,6 +4671,8 @@ function ImportExportPage({
   const [importResult, setImportResult] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [includePossibleDuplicates, setIncludePossibleDuplicates] = useState(false);
+  const [exportResult, setExportResult] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const missingCsvHeaders = getMissingCsvHeaders(csvText);
   const importCandidates = missingCsvHeaders.length === 0
@@ -4682,6 +4685,21 @@ function ImportExportPage({
   const importableRows = includePossibleDuplicates
     ? [...validRows, ...duplicateRows]
     : validRows;
+
+  async function runCsvExport(
+    filename: string,
+    rows: Record<string, unknown>[],
+  ) {
+    setExportResult(null);
+    setExportError(null);
+
+    try {
+      const savedPath = await downloadCsv(filename, rows);
+      setExportResult(`Fichier enregistré : ${savedPath}`);
+    } catch (error) {
+      setExportError(String(error));
+    }
+  }
 
   async function handleCsvFile(event: FormEvent<HTMLInputElement>) {
     const file = event.currentTarget.files?.[0];
@@ -4733,6 +4751,8 @@ function ImportExportPage({
             : ""
         )
       );
+      setCsvText("");
+      setIncludePossibleDuplicates(false);
     } catch (error) {
       setImportError(String(error));
     } finally {
@@ -4741,22 +4761,34 @@ function ImportExportPage({
   }
 
   function exportTransactions() {
-    const rows = transactions.map((transaction) => ({
-      id: transaction.id,
-      date: transaction.date,
-      type: transaction.transaction_type,
-      compte: transaction.account_name ?? "",
-      compte_source: transaction.from_account_name ?? "",
-      compte_destination: transaction.to_account_name ?? "",
-      actif: transaction.security_name ?? "",
-      montant: transaction.amount,
-      quantite: transaction.quantity ?? "",
-      prix: transaction.price ?? "",
-      frais: transaction.fees,
-      note: transaction.note ?? "",
-    }));
+    const rows = transactions
+      .filter(
+        (transaction) =>
+          !["opening_position", "opening_cash"].includes(
+            transaction.transaction_type,
+          )
+      )
+      .map((transaction) => ({
+        date: transaction.date,
+        type: transaction.transaction_type,
+        compte: transaction.account_name ?? "",
+        compte_source: transaction.from_account_name ?? "",
+        compte_destination: transaction.to_account_name ?? "",
+        ticker:
+          transaction.security_ticker
+          ?? securities.find(
+            (security) => security.id === transaction.security_id
+          )?.ticker
+          ?? "",
+        actif: transaction.security_name ?? "",
+        quantite: transaction.quantity ?? "",
+        prix: transaction.price ?? "",
+        frais: transaction.fees,
+        montant: transaction.amount,
+        note: transaction.note ?? "",
+      }));
 
-    downloadCsv("atlas-transactions.csv", rows);
+    void runCsvExport("atlas-transactions.csv", rows);
   }
 
   function exportPositions() {
@@ -4775,11 +4807,11 @@ function ImportExportPage({
       performance_pourcent: position.performance_percent,
     }));
 
-    downloadCsv("atlas-positions.csv", rows);
+    void runCsvExport("atlas-positions.csv", rows);
   }
 
   function exportTransactionTemplate() {
-    downloadCsv("atlas-modele-transactions.csv", [
+    void runCsvExport("atlas-modele-transactions.csv", [
       {
         date: "2026-07-08",
         type: "buy",
@@ -4848,6 +4880,9 @@ function ImportExportPage({
               Télécharger un modèle
             </button>
           </div>
+
+          {exportResult ? <p className="form-success">{exportResult}</p> : null}
+          {exportError ? <p className="form-error">{exportError}</p> : null}
         </article>
 
         <article className="card import-export-card">
@@ -5348,9 +5383,9 @@ function csvEscape(value: unknown) {
   return `"${text.replace(/"/g, '""')}"`;
 }
 
-function downloadCsv(filename: string, rows: Record<string, unknown>[]) {
+async function downloadCsv(filename: string, rows: Record<string, unknown>[]) {
   if (rows.length === 0) {
-    return;
+    throw new Error("Aucune donnée à exporter.");
   }
 
   const headers = Object.keys(rows[0]);
@@ -5359,15 +5394,10 @@ function downloadCsv(filename: string, rows: Record<string, unknown>[]) {
     ...rows.map((row) => headers.map((header) => csvEscape(row[header])).join(",")),
   ].join("\n");
 
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-
-  link.href = url;
-  link.download = filename;
-  link.click();
-
-  URL.revokeObjectURL(url);
+  return invoke<string>("save_csv_file", {
+    filename,
+    content: csv,
+  });
 }
 
 
