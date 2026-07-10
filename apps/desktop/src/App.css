@@ -6476,3 +6476,212 @@ td:first-child { color: #374151; font-weight: 600; }
     flex-direction: column;
   }
 }
+
+
+/* External CSV column mapping */
+.csv-mapping-summary {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 14px 0;
+  border: 1px solid #e4e9ef;
+  border-radius: 13px;
+  background: #f8fafc;
+  padding: 13px 14px;
+}
+
+.csv-mapping-summary > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.csv-mapping-summary strong {
+  color: #263244;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.csv-mapping-summary span {
+  color: #7d8998;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.csv-mapping-summary-actions {
+  display: flex;
+  align-items: flex-end;
+  gap: 9px;
+}
+
+.csv-mapping-summary-actions label {
+  display: grid;
+  gap: 5px;
+  color: #788493;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.csv-mapping-summary-actions select,
+.csv-column-mapping-grid select {
+  min-height: 38px;
+  border: 1px solid #dce3eb;
+  border-radius: 10px;
+  background: #fff;
+  color: #263244;
+  padding: 8px 10px;
+  font: inherit;
+}
+
+.csv-column-mapping-card {
+  margin: 14px 0;
+  border: 1px solid #dce4ee;
+  border-radius: 16px;
+  background: #fff;
+  padding: 16px;
+}
+
+.csv-column-mapping-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.csv-column-mapping-header h3 {
+  margin: 0;
+  color: #263244;
+  font-size: 14px;
+  font-weight: 950;
+}
+
+.csv-column-mapping-header p {
+  max-width: 590px;
+  margin: 5px 0 0;
+  color: #7d8998;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.csv-column-mapping-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.csv-column-mapping-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.csv-column-mapping-grid label {
+  display: grid;
+  gap: 5px;
+}
+
+.csv-column-mapping-grid label > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  color: #687586;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.csv-column-mapping-grid em {
+  border-radius: 999px;
+  background: rgba(190, 63, 63, .08);
+  color: #ad4343;
+  padding: 3px 6px;
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.csv-column-preview {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  border-top: 1px solid #e7ebf0;
+  padding-top: 13px;
+}
+
+.csv-column-preview > strong {
+  color: #263244;
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.csv-column-preview > div {
+  display: grid;
+  gap: 5px;
+}
+
+.csv-column-preview span {
+  overflow: hidden;
+  color: #748092;
+  font-size: 11px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-shell.dark .csv-mapping-summary,
+.app-shell.dark .csv-column-mapping-card {
+  border-color: #293443;
+  background: #10161e;
+}
+
+.app-shell.dark .csv-mapping-summary strong,
+.app-shell.dark .csv-column-mapping-header h3,
+.app-shell.dark .csv-column-preview > strong {
+  color: #f3f4f6;
+}
+
+.app-shell.dark .csv-mapping-summary span,
+.app-shell.dark .csv-mapping-summary-actions label,
+.app-shell.dark .csv-column-mapping-header p,
+.app-shell.dark .csv-column-mapping-grid label > span,
+.app-shell.dark .csv-column-preview span {
+  color: #a8b3c1;
+}
+
+.app-shell.dark .csv-mapping-summary-actions select,
+.app-shell.dark .csv-column-mapping-grid select {
+  border-color: #293443;
+  background: #151c25;
+  color: #f3f4f6;
+}
+
+@media (max-width: 980px) {
+  .csv-column-mapping-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .csv-column-mapping-header,
+  .csv-mapping-summary {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .csv-column-mapping-actions,
+  .csv-mapping-summary-actions {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 620px) {
+  .csv-column-mapping-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .csv-mapping-summary-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
