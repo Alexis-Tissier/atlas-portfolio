@@ -2930,8 +2930,10 @@ function calculateXirrPercent(flows: DatedCashFlow[]) {
     return null;
   }
 
+  let upperBound: number = upper;
+
   for (let iteration = 0; iteration < 120; iteration += 1) {
-    const middle = (lower + upper) / 2;
+    const middle: number = (lower + upperBound) / 2;
     const middleValue = npv(middle);
 
     if (!Number.isFinite(middleValue)) {
@@ -2947,11 +2949,11 @@ function calculateXirrPercent(flows: DatedCashFlow[]) {
       lower = middle;
       lowerValue = middleValue;
     } else {
-      upper = middle;
+      upperBound = middle;
     }
   }
 
-  return ((lower + upper) / 2) * 100;
+  return ((lower + upperBound) / 2) * 100;
 }
 
 function buildDetailedPerformanceLedger(
@@ -3429,10 +3431,6 @@ function PerformancePage({
       : formatSignedPercent(ledger.xirrPercent);
   const discrepancyIsMaterial =
     Math.abs(ledger.unexplainedDifference) > 0.02;
-  const dataQualityLabel =
-    ledger.issueCount === 0 && !discrepancyIsMaterial
-      ? "Cohérent"
-      : "À vérifier";
 
   return (
     <section className="page performance-engine-page">
@@ -3445,34 +3443,10 @@ function PerformancePage({
           </p>
         </div>
 
-        <span
-          className={
-            dataQualityLabel === "Cohérent"
-              ? "status-pill connected"
-              : "status-pill warning"
-          }
-        >
-          {dataQualityLabel}
-        </span>
+        
       </div>
 
-      <article className="card performance-price-explanation">
-        <div>
-          <span>Principe de calcul</span>
-          <h2>Prix d’achat et cours actuel restent indépendants</h2>
-          <p>
-            Le prix enregistré dans un achat reste le prix réellement payé à
-            cette date. Le PRU est calculé à partir de ces achats et de leurs
-            frais. Le cours actuel vient du dernier cours disponible et sert
-            uniquement à valoriser la position aujourd’hui.
-          </p>
-        </div>
-
-        <div className="performance-price-formula">
-          <strong>Plus-value latente</strong>
-          <span>Quantité × (cours actuel − PRU)</span>
-        </div>
-      </article>
+      
 
       <div className="transaction-summary-grid performance-engine-summary">
         <MetricCard
@@ -3540,11 +3514,15 @@ function PerformancePage({
         </article>
 
         <article className="card performance-composition-card">
-          <h2>Origine de la performance</h2>
-          <p className="muted">
-            Les frais d’ordres sont déjà intégrés au PRU et aux ventes. Les
-            frais autonomes sont déduits séparément.
-          </p>
+          <div className="card-header performance-section-header">
+            <div>
+              <h2>Origine de la performance</h2>
+              <p className="muted">
+                Les frais d’ordres sont déjà intégrés au PRU et aux ventes.
+                Les frais autonomes sont déduits séparément.
+              </p>
+            </div>
+          </div>
 
           <div className="performance-composition-list">
             <div>
@@ -3593,7 +3571,7 @@ function PerformancePage({
           )}
         </article>
 
-        <article className="card performance-card">
+        <article className="card performance-card performance-twr-card">
           <div className="card-header">
             <div>
               <h2>TWR estimé</h2>
@@ -3612,12 +3590,16 @@ function PerformancePage({
           />
         </article>
 
-        <article className="card performance-card">
-          <h2>Apports nets cumulés</h2>
-          <p className="muted">
-            Dépôts et retraits externes. Les transferts entre comptes inclus
-            sont ignorés.
-          </p>
+        <article className="card performance-card performance-flow-card">
+          <div className="card-header performance-section-header">
+            <div>
+              <h2>Apports nets cumulés</h2>
+              <p className="muted">
+                Dépôts et retraits externes. Les transferts entre comptes
+                inclus sont ignorés.
+              </p>
+            </div>
+          </div>
 
           <PerformanceMiniChart
             data={performanceAnalytics.externalFlowSeries}
@@ -3626,40 +3608,6 @@ function PerformancePage({
           />
         </article>
 
-        <article className="card performance-quality-card">
-          <h2>Qualité de l’historique</h2>
-
-          <div className="performance-quality-list">
-            <div>
-              <span>Début détecté</span>
-              <strong>
-                {ledger.firstTransactionDate
-                  ? formatDate(ledger.firstTransactionDate)
-                  : "—"}
-              </strong>
-            </div>
-            <div>
-              <span>Ajustements d’ouverture</span>
-              <strong>{ledger.openingAdjustmentCount}</strong>
-            </div>
-            <div>
-              <span>Anomalies de journal</span>
-              <strong>{ledger.issueCount}</strong>
-            </div>
-            <div>
-              <span>Snapshots</span>
-              <strong>{snapshots.length}</strong>
-            </div>
-            <div>
-              <span>Coût restant</span>
-              <strong>{displayEuro(ledger.currentCostBasis, isPrivacyMode)}</strong>
-            </div>
-            <div>
-              <span>Frais d’ordres</span>
-              <strong>{displayEuro(ledger.tradingFees, isPrivacyMode)}</strong>
-            </div>
-          </div>
-        </article>
       </div>
 
       <article className="card performance-wide-card performance-engine-table-card">
