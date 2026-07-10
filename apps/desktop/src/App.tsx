@@ -1501,10 +1501,18 @@ function AccountManagerModal({
                 Type
                 <select onChange={(event) => setForm((current) => ({ ...current, accountType: event.target.value as NewAccountInput["account_type"] }))} value={form.accountType}>
                   <option value="pea">PEA</option>
+                  <option value="pea_pme">PEA-PME</option>
                   <option value="cto">Compte-titres</option>
+                  <option value="pee">PEE</option>
+                  <option value="per">PER</option>
+                  <option value="assurance_vie">Assurance-vie</option>
                   <option value="current_account">Compte courant</option>
                   <option value="livret_a">Livret A</option>
+                  <option value="ldds">LDDS</option>
+                  <option value="pel">PEL</option>
+                  <option value="savings_account">Compte épargne</option>
                   <option value="crypto_wallet">Compte crypto</option>
+                  <option value="other">Autre compte</option>
                 </select>
               </label>
 
@@ -5771,6 +5779,7 @@ function buildDistributionDonut(rows: DistributionRow[]) {
 
 function buildAccountDistributionRows(accounts: DashboardData["accounts"], totalValue: number): DistributionRow[] {
   return accounts
+    .filter((account) => account.include_in_net_worth)
     .map((account, index) => ({
       label: account.name,
       value: account.total_value,
@@ -5787,6 +5796,7 @@ function buildAccountClassDistribution(
   positions: PositionPageRow[],
 ): AccountClassDistribution[] {
   return accounts
+    .filter((account) => account.include_in_net_worth)
     .map((account) => {
       const accountPositions = positions.filter((position) => position.account_name === account.name);
       const values = new Map<string, number>();
@@ -6465,9 +6475,17 @@ function labelForAccountType(accountType: string) {
   const labels: Record<string, string> = {
     current_account: "Compte courant",
     pea: "PEA",
+    pea_pme: "PEA-PME",
     cto: "Compte-titres",
+    pee: "PEE",
+    per: "PER",
+    assurance_vie: "Assurance-vie",
     livret_a: "Livret A",
+    ldds: "LDDS",
+    pel: "PEL",
+    savings_account: "Compte épargne",
     crypto_wallet: "Compte crypto",
+    other: "Autre compte",
   };
 
   return labels[accountType] ?? accountType;

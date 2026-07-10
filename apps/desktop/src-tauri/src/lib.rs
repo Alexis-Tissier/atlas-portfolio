@@ -336,9 +336,99 @@ fn database_path() -> Result<PathBuf, String> {
     Ok(db_path)
 }
 
+fn ensure_flexible_account_types(connection: &Connection) -> Result<(), String> {
+    let table_sql = connection
+        .query_row(
+            "
+            SELECT sql
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'accounts'
+            ",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("Erreur lecture schéma accounts : {error}"))?;
+
+    let Some(table_sql) = table_sql else {
+        return Ok(());
+    };
+
+    if !table_sql.to_lowercase().contains("check") {
+        return Ok(());
+    }
+
+    connection
+        .execute_batch(
+            "
+            PRAGMA foreign_keys = OFF;
+
+            BEGIN IMMEDIATE;
+
+            CREATE TABLE accounts_atlas_migrated (
+              id TEXT PRIMARY KEY,
+              name TEXT NOT NULL,
+              type TEXT NOT NULL,
+              currency TEXT NOT NULL DEFAULT 'EUR',
+              cash_balance REAL NOT NULL DEFAULT 0,
+              include_in_net_worth INTEGER NOT NULL DEFAULT 1,
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            INSERT INTO accounts_atlas_migrated (
+              id,
+              name,
+              type,
+              currency,
+              cash_balance,
+              include_in_net_worth,
+              created_at,
+              updated_at
+            )
+            SELECT
+              id,
+              name,
+              type,
+              currency,
+              cash_balance,
+              include_in_net_worth,
+              created_at,
+              updated_at
+            FROM accounts;
+
+            DROP TABLE accounts;
+
+            ALTER TABLE accounts_atlas_migrated
+            RENAME TO accounts;
+
+            COMMIT;
+
+            PRAGMA foreign_keys = ON;
+            ",
+        )
+        .map_err(|error| {
+            let _ = connection.execute_batch(
+                "
+                ROLLBACK;
+                PRAGMA foreign_keys = ON;
+                ",
+            );
+
+            format!("Erreur migration des types de comptes : {error}")
+        })?;
+
+    Ok(())
+}
+
 fn open_database() -> Result<Connection, String> {
     let path = database_path()?;
-    Connection::open(path).map_err(|error| format!("Impossible d'ouvrir SQLite : {error}"))
+    let connection =
+        Connection::open(path).map_err(|error| format!("Impossible d'ouvrir SQLite : {error}"))?;
+
+    ensure_flexible_account_types(&connection)?;
+
+    Ok(connection)
 }
 
 fn alpha_vantage_api_key() -> Result<String, String> {
@@ -904,10 +994,18 @@ fn read_accounts(connection: &Connection) -> Result<Vec<DbAccount>, String> {
             ORDER BY
               CASE type
                 WHEN 'current_account' THEN 1
-                WHEN 'pea' THEN 2
-                WHEN 'cto' THEN 3
-                WHEN 'livret_a' THEN 4
-                WHEN 'crypto_wallet' THEN 5
+                WHEN 'livret_a' THEN 2
+                WHEN 'ldds' THEN 3
+                WHEN 'pel' THEN 4
+                WHEN 'savings_account' THEN 5
+                WHEN 'pea' THEN 10
+                WHEN 'pea_pme' THEN 11
+                WHEN 'cto' THEN 12
+                WHEN 'pee' THEN 13
+                WHEN 'per' THEN 14
+                WHEN 'assurance_vie' THEN 15
+                WHEN 'crypto_wallet' THEN 20
+                WHEN 'other' THEN 30
                 ELSE 99
               END,
               lower(name)
@@ -1039,7 +1137,19 @@ fn normalized_account_fields(
 
     if !matches!(
         account_type.as_str(),
-        "current_account" | "pea" | "cto" | "livret_a" | "crypto_wallet"
+        "current_account"
+            | "pea"
+            | "pea_pme"
+            | "cto"
+            | "pee"
+            | "per"
+            | "assurance_vie"
+            | "livret_a"
+            | "ldds"
+            | "pel"
+            | "savings_account"
+            | "crypto_wallet"
+            | "other"
     ) {
         return Err("Type de compte invalide.".to_string());
     }

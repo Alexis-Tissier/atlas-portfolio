@@ -230,7 +230,7 @@ export type NewSecurityInput = {
 
 export type NewAccountInput = {
   name: string;
-  account_type: "current_account" | "pea" | "cto" | "livret_a" | "crypto_wallet";
+  account_type: "current_account" | "pea" | "pea_pme" | "cto" | "pee" | "per" | "assurance_vie" | "livret_a" | "ldds" | "pel" | "savings_account" | "crypto_wallet" | "other";
   currency: string;
   initial_cash: number;
   opening_date: string;
@@ -240,7 +240,7 @@ export type NewAccountInput = {
 export type UpdateAccountInput = {
   id: string;
   name: string;
-  account_type: "current_account" | "pea" | "cto" | "livret_a" | "crypto_wallet";
+  account_type: "current_account" | "pea" | "pea_pme" | "cto" | "pee" | "per" | "assurance_vie" | "livret_a" | "ldds" | "pel" | "savings_account" | "crypto_wallet" | "other";
   currency: string;
   include_in_net_worth: boolean;
 };

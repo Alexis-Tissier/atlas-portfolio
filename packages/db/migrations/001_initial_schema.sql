@@ -7,9 +7,7 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS accounts (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
-  type TEXT NOT NULL CHECK (
-    type IN ('current_account', 'pea', 'cto', 'livret_a', 'crypto_wallet')
-  ),
+  type TEXT NOT NULL,
   currency TEXT NOT NULL DEFAULT 'EUR',
   cash_balance REAL NOT NULL DEFAULT 0,
   include_in_net_worth INTEGER NOT NULL DEFAULT 1,
