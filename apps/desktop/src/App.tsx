@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState, useRef } from "react";
+import { Fragment, FormEvent, useEffect, useState, useRef } from "react";
 import "./App.css";
 import { monthlyContribution } from "./mocks/mockPortfolio";
 import { formatEuro, getAllocationRows, getPositionRows, getPortfolioSummary } from "./core/portfolioCalculations";
@@ -77,7 +77,7 @@ type AllocationDisplayRow = {
 
 type CsvImportCandidate = {
   row: Record<string, string>;
-  status: "valid" | "error";
+  status: "valid" | "error" | "duplicate";
   message: string;
   payload?: NewCashTransaction | NewTradeTransaction;
 };
@@ -2946,6 +2946,7 @@ function PositionsPage({
   );
 }
 
+
 function TransactionsPage({
   accounts,
   isPrivacyMode,
@@ -2965,11 +2966,103 @@ function TransactionsPage({
 }) {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<DbTransaction | null>(null);
+  const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
+  const [transactionSearch, setTransactionSearch] = useState("");
+  const [transactionTypeFilter, setTransactionTypeFilter] = useState("all");
+  const [transactionPeriodFilter, setTransactionPeriodFilter] = useState<"all" | "30d" | "90d" | "365d">("all");
+  const [visibleTransactionLimit, setVisibleTransactionLimit] = useState(50);
 
   const visibleTransactions = transactions.filter(
     (transaction) => !["opening_position", "opening_cash"].includes(transaction.transaction_type)
   );
   const technicalTransactionCount = transactions.length - visibleTransactions.length;
+
+  function toggleAccountFilter(accountId: string) {
+    setSelectedAccountIds((current) => (
+      current.includes(accountId)
+        ? current.filter((selectedId) => selectedId !== accountId)
+        : [...current, accountId]
+    ));
+  }
+
+  function transactionMatchesPeriod(transaction: DbTransaction) {
+    if (transactionPeriodFilter === "all") {
+      return true;
+    }
+
+    const numberOfDays = {
+      "30d": 30,
+      "90d": 90,
+      "365d": 365,
+    }[transactionPeriodFilter];
+
+    const transactionDate = new Date(`${transaction.date}T00:00:00`);
+    const minimumDate = new Date();
+    minimumDate.setHours(0, 0, 0, 0);
+    minimumDate.setDate(minimumDate.getDate() - numberOfDays);
+
+    return !Number.isNaN(transactionDate.getTime()) && transactionDate >= minimumDate;
+  }
+
+  const normalizedSearch = transactionSearch.trim().toLowerCase();
+
+  const filteredTransactions = visibleTransactions.filter((transaction) => {
+    const relatedAccountIds = [
+      transaction.account_id,
+      transaction.from_account_id,
+      transaction.to_account_id,
+    ].filter((accountId): accountId is string => Boolean(accountId));
+
+    const matchesAccount = selectedAccountIds.length === 0
+      || selectedAccountIds.some((accountId) => relatedAccountIds.includes(accountId));
+
+    const matchesType = transactionTypeFilter === "all"
+      || transaction.transaction_type === transactionTypeFilter;
+
+    const searchableText = [
+      transaction.date,
+      labelForTransactionType(transaction.transaction_type),
+      transaction.account_name,
+      transaction.from_account_name,
+      transaction.to_account_name,
+      transaction.security_name,
+      transaction.note,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
+    const matchesSearch = normalizedSearch.length === 0 || searchableText.includes(normalizedSearch);
+
+    return matchesAccount && matchesType && matchesSearch && transactionMatchesPeriod(transaction);
+  });
+
+  useEffect(() => {
+    setVisibleTransactionLimit(50);
+  }, [selectedAccountIds, transactionSearch, transactionTypeFilter, transactionPeriodFilter]);
+
+  const displayedTransactions = filteredTransactions.slice(0, visibleTransactionLimit);
+  const hasMoreTransactions = displayedTransactions.length < filteredTransactions.length;
+  const hasActiveFilters = selectedAccountIds.length > 0
+    || transactionSearch.trim().length > 0
+    || transactionTypeFilter !== "all"
+    || transactionPeriodFilter !== "all";
+
+  const selectedAccountNames = accounts
+    .filter((account) => selectedAccountIds.includes(account.id))
+    .map((account) => account.name);
+
+  const accountFilterSummary = selectedAccountNames.length === 0
+    ? "Tous les comptes"
+    : selectedAccountNames.join(" + ");
+
+  function resetTransactionFilters() {
+    setSelectedAccountIds([]);
+    setTransactionSearch("");
+    setTransactionTypeFilter("all");
+    setTransactionPeriodFilter("all");
+    setVisibleTransactionLimit(50);
+  }
 
   async function handleDeleteTransaction(transaction: DbTransaction) {
     const confirmed = window.confirm(`Supprimer la transaction du ${formatDate(transaction.date)} ?`);
@@ -2992,31 +3085,31 @@ function TransactionsPage({
     setIsFormOpen(true);
   }
 
-  const totalDeposits = visibleTransactions
+  const totalDeposits = filteredTransactions
     .filter((transaction) => transaction.transaction_type === "deposit")
     .reduce((sum, transaction) => sum + transaction.amount, 0);
 
-  const totalWithdrawals = visibleTransactions
+  const totalWithdrawals = filteredTransactions
     .filter((transaction) => transaction.transaction_type === "withdrawal")
     .reduce((sum, transaction) => sum + transaction.amount, 0);
 
-  const totalTransfers = visibleTransactions
+  const totalTransfers = filteredTransactions
     .filter((transaction) => transaction.transaction_type === "transfer")
     .reduce((sum, transaction) => sum + transaction.amount, 0);
 
-  const totalBuys = visibleTransactions
+  const totalBuys = filteredTransactions
     .filter((transaction) => transaction.transaction_type === "buy")
     .reduce((sum, transaction) => sum + transaction.amount, 0);
 
-  const totalSells = visibleTransactions
+  const totalSells = filteredTransactions
     .filter((transaction) => transaction.transaction_type === "sell")
     .reduce((sum, transaction) => sum + transaction.amount, 0);
 
-  const totalDividends = visibleTransactions
+  const totalDividends = filteredTransactions
     .filter((transaction) => transaction.transaction_type === "dividend")
     .reduce((sum, transaction) => sum + transaction.amount, 0);
 
-  const totalFees = visibleTransactions
+  const totalFees = filteredTransactions
     .filter((transaction) => transaction.transaction_type === "fee")
     .reduce((sum, transaction) => sum + transaction.amount, 0);
 
@@ -3025,7 +3118,7 @@ function TransactionsPage({
       <div className="title-block page-title-row">
         <div>
           <h1>Transactions</h1>
-          <p>Suivi des achats, ventes, dépôts, retraits, dividendes, frais et transferts.</p>
+          <p>Ajoutez une opération, puis retrouvez-la rapidement par compte, type, date ou mot-clé.</p>
         </div>
 
         <button className="primary-action" onClick={() => (isFormOpen ? setIsFormOpen(false) : openCreateForm())}>
@@ -3052,8 +3145,95 @@ function TransactionsPage({
         />
       ) : null}
 
+      <article className="card transaction-filter-card">
+        <div className="transaction-filter-header">
+          <div>
+            <h2>Filtrer les transactions</h2>
+            <p>
+              {filteredTransactions.length} résultat(s) · {accountFilterSummary}.
+              Clique sur plusieurs comptes pour les combiner.
+            </p>
+          </div>
+
+          {hasActiveFilters ? (
+            <button className="secondary-action" onClick={resetTransactionFilters} type="button">
+              Tout réinitialiser
+            </button>
+          ) : null}
+        </div>
+
+        <div className="transaction-filter-section">
+          <span className="transaction-filter-label">Comptes</span>
+
+          <div className="transaction-account-chips">
+            <button
+              aria-pressed={selectedAccountIds.length === 0}
+              className={selectedAccountIds.length === 0 ? "transaction-filter-chip active" : "transaction-filter-chip"}
+              onClick={() => setSelectedAccountIds([])}
+              type="button"
+            >
+              Tous
+            </button>
+
+            {accounts.map((account) => (
+              <button
+                aria-pressed={selectedAccountIds.includes(account.id)}
+                className={selectedAccountIds.includes(account.id) ? "transaction-filter-chip active" : "transaction-filter-chip"}
+                key={account.id}
+                onClick={() => toggleAccountFilter(account.id)}
+                type="button"
+              >
+                <strong>{account.name}</strong>
+                <small>{labelForAccountType(account.account_type)}</small>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="transaction-filter-fields">
+          <label className="transaction-search-field">
+            Rechercher
+            <input
+              onChange={(event) => setTransactionSearch(event.target.value)}
+              placeholder="Actif, compte, note..."
+              value={transactionSearch}
+            />
+          </label>
+
+          <label>
+            Type
+            <select
+              onChange={(event) => setTransactionTypeFilter(event.target.value)}
+              value={transactionTypeFilter}
+            >
+              <option value="all">Tous les types</option>
+              <option value="buy">Achats</option>
+              <option value="sell">Ventes</option>
+              <option value="deposit">Dépôts</option>
+              <option value="withdrawal">Retraits</option>
+              <option value="transfer">Transferts</option>
+              <option value="dividend">Dividendes</option>
+              <option value="fee">Frais</option>
+            </select>
+          </label>
+
+          <label>
+            Période
+            <select
+              onChange={(event) => setTransactionPeriodFilter(event.target.value as "all" | "30d" | "90d" | "365d")}
+              value={transactionPeriodFilter}
+            >
+              <option value="all">Toutes les dates</option>
+              <option value="30d">30 derniers jours</option>
+              <option value="90d">3 derniers mois</option>
+              <option value="365d">12 derniers mois</option>
+            </select>
+          </label>
+        </div>
+      </article>
+
       <div className="transaction-summary-grid">
-        <MetricCard label="Transactions" value={String(visibleTransactions.length)} note="opérations visibles" />
+        <MetricCard label="Transactions" value={String(filteredTransactions.length)} note={accountFilterSummary} />
         <MetricCard label="Dépôts" value={displayEuro(totalDeposits, isPrivacyMode)} note="apports entrants" />
         <MetricCard label="Retraits" value={displayEuro(totalWithdrawals, isPrivacyMode)} note="sorties enregistrées" />
         <MetricCard label="Achats" value={displayEuro(totalBuys, isPrivacyMode)} note="ordres exécutés" />
@@ -3067,7 +3247,9 @@ function TransactionsPage({
         <div className="transactions-header">
           <div>
             <h2>Journal des transactions</h2>
-            <p>Journal local des opérations enregistrées.</p>
+            <p>
+              {displayedTransactions.length} ligne(s) affichée(s) sur {filteredTransactions.length}.
+            </p>
             {technicalTransactionCount > 0 ? (
               <p className="technical-note">
                 {technicalTransactionCount} ajustement(s) technique(s) masqué(s) par défaut.
@@ -3095,7 +3277,7 @@ function TransactionsPage({
             </tr>
           </thead>
           <tbody>
-            {visibleTransactions.map((transaction) => (
+            {displayedTransactions.map((transaction) => (
               <tr key={transaction.id}>
                 <td>{formatDate(transaction.date)}</td>
                 <td><span className={`type-pill ${transaction.transaction_type}`}>{labelForTransactionType(transaction.transaction_type)}</span></td>
@@ -3114,13 +3296,32 @@ function TransactionsPage({
                 </td>
               </tr>
             ))}
+
+            {displayedTransactions.length === 0 ? (
+              <tr>
+                <td className="transaction-empty-state" colSpan={10}>
+                  Aucune transaction ne correspond à ces filtres.
+                </td>
+              </tr>
+            ) : null}
           </tbody>
         </table>
+
+        {hasMoreTransactions ? (
+          <div className="transaction-load-more">
+            <button
+              className="secondary-action"
+              onClick={() => setVisibleTransactionLimit((current) => current + 50)}
+              type="button"
+            >
+              Afficher 50 lignes de plus
+            </button>
+          </div>
+        ) : null}
       </article>
     </section>
   );
 }
-
 
 function TransactionForm({
   accounts,
@@ -3170,8 +3371,6 @@ function TransactionForm({
   const isIncomeOrFee = isDividend || isFee;
   const selectedSecurity = availableSecurities.find((security) => security.id === securityId);
   const selectedAccount = accounts.find((account) => account.id === accountId);
-  const selectedFromAccount = accounts.find((account) => account.id === fromAccountId);
-  const selectedToAccount = accounts.find((account) => account.id === toAccountId);
   const normalizedAssetSearch = assetQuery.trim().toLowerCase();
 
   const filteredSecurities = normalizedAssetSearch
@@ -3188,35 +3387,189 @@ function TransactionForm({
   const parsedQuantity = parseDecimal(quantity || "0");
   const parsedPrice = parseDecimal(price || "0");
   const parsedFees = parseDecimal(fees || "0");
-  const grossTradeAmount = isPositiveNumber(parsedQuantity) && isPositiveNumber(parsedPrice)
-    ? parsedQuantity * parsedPrice
+
+  const safeAmount = Number.isFinite(parsedAmount) ? parsedAmount : 0;
+  const safeQuantity = Number.isFinite(parsedQuantity) ? parsedQuantity : 0;
+  const safePrice = Number.isFinite(parsedPrice) ? parsedPrice : 0;
+  const safeFees = Number.isFinite(parsedFees) ? parsedFees : 0;
+
+  function cashDeltaForTransactionOnAccount(transaction: DbTransaction, targetAccountId: string) {
+    const transactionQuantity = transaction.quantity ?? 0;
+    const transactionPrice = transaction.price ?? 0;
+    const transactionFees = transaction.fees ?? 0;
+
+    switch (transaction.transaction_type) {
+      case "deposit":
+        return (transaction.to_account_id ?? transaction.account_id) === targetAccountId
+          ? transaction.amount
+          : 0;
+      case "withdrawal":
+        return (transaction.from_account_id ?? transaction.account_id) === targetAccountId
+          ? -transaction.amount
+          : 0;
+      case "transfer": {
+        let delta = 0;
+
+        if (transaction.from_account_id === targetAccountId) {
+          delta -= transaction.amount;
+        }
+
+        if (transaction.to_account_id === targetAccountId) {
+          delta += transaction.amount;
+        }
+
+        return delta;
+      }
+      case "dividend":
+        return (transaction.account_id ?? transaction.to_account_id) === targetAccountId
+          ? transaction.amount
+          : 0;
+      case "fee":
+        return (transaction.account_id ?? transaction.from_account_id) === targetAccountId
+          ? -transaction.amount
+          : 0;
+      case "buy":
+        return transaction.account_id === targetAccountId
+          ? -(transactionQuantity * transactionPrice + transactionFees)
+          : 0;
+      case "sell":
+        return transaction.account_id === targetAccountId
+          ? transactionQuantity * transactionPrice - transactionFees
+          : 0;
+      default:
+        return 0;
+    }
+  }
+
+  function positionDeltaForTransaction(
+    transaction: DbTransaction,
+    targetAccountId: string,
+    targetSecurityId: string,
+  ) {
+    if (
+      transaction.account_id !== targetAccountId ||
+      transaction.security_id !== targetSecurityId
+    ) {
+      return 0;
+    }
+
+    if (transaction.transaction_type === "buy") {
+      return transaction.quantity ?? 0;
+    }
+
+    if (transaction.transaction_type === "sell") {
+      return -(transaction.quantity ?? 0);
+    }
+
+    return 0;
+  }
+
+  function newCashDeltaForAccount(targetAccountId: string) {
+    switch (transactionType) {
+      case "deposit":
+        return toAccountId === targetAccountId ? safeAmount : 0;
+      case "withdrawal":
+        return fromAccountId === targetAccountId ? -safeAmount : 0;
+      case "transfer": {
+        let delta = 0;
+
+        if (fromAccountId === targetAccountId) {
+          delta -= safeAmount;
+        }
+
+        if (toAccountId === targetAccountId) {
+          delta += safeAmount;
+        }
+
+        return delta;
+      }
+      case "dividend":
+        return toAccountId === targetAccountId ? safeAmount : 0;
+      case "fee":
+        return fromAccountId === targetAccountId ? -safeAmount : 0;
+      default:
+        return 0;
+    }
+  }
+
+  const grossTradeAmount = isPositiveNumber(safeQuantity) && isPositiveNumber(safePrice)
+    ? safeQuantity * safePrice
     : 0;
+
   const tradeCashImpact = transactionType === "buy"
-    ? grossTradeAmount + (Number.isFinite(parsedFees) ? parsedFees : 0)
-    : Math.max(grossTradeAmount - (Number.isFinite(parsedFees) ? parsedFees : 0), 0);
+    ? grossTradeAmount + safeFees
+    : Math.max(grossTradeAmount - safeFees, 0);
 
   const currentPosition = positions.find((position) => (
-    position.account_name === selectedAccount?.name &&
-    selectedSecurity !== undefined &&
-    (
-      position.security_name === selectedSecurity.name ||
-      position.ticker === selectedSecurity.ticker
-    )
+    position.account_id === accountId &&
+    position.security_id === securityId
   ));
-  const ownedQuantity = currentPosition?.quantity ?? 0;
-  const projectedQuantity = transactionType === "buy"
-    ? ownedQuantity + (Number.isFinite(parsedQuantity) ? parsedQuantity : 0)
-    : ownedQuantity - (Number.isFinite(parsedQuantity) ? parsedQuantity : 0);
-  const projectedTradeCash = transactionType === "buy"
-    ? (selectedAccount?.cash_balance ?? 0) - tradeCashImpact
-    : (selectedAccount?.cash_balance ?? 0) + tradeCashImpact;
 
-  const selectedCashAccount = isDividend ? selectedToAccount : isFee ? selectedFromAccount : null;
-  const projectedCashAccountBalance = isDividend
-    ? (selectedToAccount?.cash_balance ?? 0) + (Number.isFinite(parsedAmount) ? parsedAmount : 0)
-    : isFee
-      ? (selectedFromAccount?.cash_balance ?? 0) - (Number.isFinite(parsedAmount) ? parsedAmount : 0)
-      : null;
+  const currentOwnedQuantity = currentPosition?.quantity ?? 0;
+  const oldPositionDelta = isEditing && transactionToEdit
+    ? positionDeltaForTransaction(transactionToEdit, accountId, securityId)
+    : 0;
+
+  const availableQuantityBeforeOperation = Math.max(currentOwnedQuantity - oldPositionDelta, 0);
+  const newPositionDelta = transactionType === "buy"
+    ? safeQuantity
+    : transactionType === "sell"
+      ? -safeQuantity
+      : 0;
+  const projectedQuantity = availableQuantityBeforeOperation + newPositionDelta;
+
+  const oldTradeCashDelta = isEditing && transactionToEdit && accountId
+    ? cashDeltaForTransactionOnAccount(transactionToEdit, accountId)
+    : 0;
+  const tradeCashBeforeOperation = (selectedAccount?.cash_balance ?? 0) - oldTradeCashDelta;
+  const newTradeCashDelta = transactionType === "buy" ? -tradeCashImpact : tradeCashImpact;
+  const projectedTradeCash = tradeCashBeforeOperation + newTradeCashDelta;
+
+  const newCashAccountIds = transactionType === "transfer"
+    ? [fromAccountId, toAccountId]
+    : transactionType === "deposit" || transactionType === "dividend"
+      ? [toAccountId]
+      : transactionType === "withdrawal" || transactionType === "fee"
+        ? [fromAccountId]
+        : [];
+
+  const oldCashAccountIds = isEditing && transactionToEdit
+    ? [
+        transactionToEdit.account_id,
+        transactionToEdit.from_account_id,
+        transactionToEdit.to_account_id,
+      ].filter((value): value is string => Boolean(value))
+    : [];
+
+  const cashImpactAccountIds = [...new Set(
+    [...newCashAccountIds, ...oldCashAccountIds].filter(Boolean)
+  )];
+
+  const cashImpactRows = cashImpactAccountIds
+    .map((cashAccountId) => {
+      const cashAccount = accounts.find((account) => account.id === cashAccountId);
+
+      if (!cashAccount) {
+        return null;
+      }
+
+      const oldDelta = isEditing && transactionToEdit
+        ? cashDeltaForTransactionOnAccount(transactionToEdit, cashAccountId)
+        : 0;
+      const balanceBefore = cashAccount.cash_balance - oldDelta;
+      const newDelta = newCashDeltaForAccount(cashAccountId);
+
+      return {
+        account: cashAccount,
+        balanceBefore,
+        balanceAfter: balanceBefore + newDelta,
+        delta: newDelta,
+      };
+    })
+    .filter((row): row is NonNullable<typeof row> => row !== null);
+
+  const saleExceedsAvailableQuantity = transactionType === "sell"
+    && safeQuantity > availableQuantityBeforeOperation + 0.0000001;
 
   useEffect(() => {
     setAvailableSecurities(securities);
@@ -3412,8 +3765,10 @@ function TransactionForm({
         return;
       }
 
-      if (!isEditing && tradeTransactionType === "sell" && finalQuantity > ownedQuantity + 0.0000001) {
-        setFormError(`Vente impossible : tu détiens ${formatQuantity(ownedQuantity)} unité(s), tu essaies d’en vendre ${formatQuantity(finalQuantity)}.`);
+      if (tradeTransactionType === "sell" && finalQuantity > availableQuantityBeforeOperation + 0.0000001) {
+        setFormError(
+          `Vente impossible : ${formatQuantity(availableQuantityBeforeOperation)} unité(s) disponible(s) avant l’opération, ${formatQuantity(finalQuantity)} demandée(s).`
+        );
         return;
       }
 
@@ -3686,58 +4041,105 @@ function TransactionForm({
         </label>
 
         <div className="transaction-form-recap">
-          <strong>Résumé avant validation</strong>
+          <div className="transaction-recap-header">
+            <strong>Résumé avant validation</strong>
+            {isEditing ? <span>Modification</span> : null}
+          </div>
+
+          {isEditing ? (
+            <p className="transaction-recap-edit-note">
+              L’ancienne opération sera d’abord annulée, puis remplacée par les nouvelles valeurs ci-dessous.
+            </p>
+          ) : null}
 
           {isTrade ? (
-            <div className="transaction-recap-grid">
-              <span>Compte</span>
-              <p>{selectedAccount?.name ?? "—"}</p>
+            <>
+              <div className="transaction-recap-grid">
+                <span>Compte</span>
+                <p>{selectedAccount?.name ?? "—"}</p>
 
-              <span>Actif</span>
-              <p>{selectedSecurity ? `${selectedSecurity.name} · ${selectedSecurity.ticker}` : "—"}</p>
+                <span>Actif</span>
+                <p>{selectedSecurity ? `${selectedSecurity.name} · ${selectedSecurity.ticker}` : "—"}</p>
 
-              <span>{transactionType === "buy" ? "Total débité" : "Total encaissé"}</span>
-              <p>{displayEuro(tradeCashImpact, isPrivacyMode)}</p>
+                <span>Quantité disponible avant</span>
+                <p>{formatQuantity(availableQuantityBeforeOperation)}</p>
 
-              <span>Cash estimé après</span>
-              <p>{displayEuro(projectedTradeCash, isPrivacyMode)}</p>
+                <span>{transactionType === "buy" ? "Quantité achetée" : "Quantité vendue"}</span>
+                <p>{formatQuantity(safeQuantity)}</p>
 
-              <span>Quantité détenue</span>
-              <p>{formatQuantity(ownedQuantity)}</p>
+                <span>Quantité après</span>
+                <p className={saleExceedsAvailableQuantity ? "negative" : undefined}>
+                  {formatQuantity(projectedQuantity)}
+                </p>
 
-              <span>Quantité après opération</span>
-              <p className={!isEditing && transactionType === "sell" && projectedQuantity < -0.0000001 ? "negative" : undefined}>
-                {formatQuantity(projectedQuantity)}
-              </p>
-            </div>
-          ) : (
-            <div className="transaction-recap-grid">
-              <span>Flux</span>
-              <p>
-                {transactionType === "transfer"
-                  ? `${selectedFromAccount?.name ?? "—"} → ${selectedToAccount?.name ?? "—"}`
-                  : transactionType === "deposit"
-                    ? `Entrée vers ${selectedToAccount?.name ?? "—"}`
-                    : transactionType === "withdrawal"
-                      ? `Sortie depuis ${selectedFromAccount?.name ?? "—"}`
-                      : transactionType === "dividend"
-                        ? `Dividende vers ${selectedCashAccount?.name ?? "—"}`
-                        : `Frais depuis ${selectedCashAccount?.name ?? "—"}`}
-              </p>
+                <span>Montant de l’ordre</span>
+                <p>{displayEuro(grossTradeAmount, isPrivacyMode)}</p>
 
-              <span>Montant</span>
-              <p>{displayEuro(Number.isFinite(parsedAmount) ? parsedAmount : 0, isPrivacyMode)}</p>
+                <span>Frais</span>
+                <p>{displayEuro(safeFees, isPrivacyMode)}</p>
 
-              {isIncomeOrFee ? (
-                <>
-                  <span>Actif lié</span>
-                  <p>{selectedSecurity ? `${selectedSecurity.name} · ${selectedSecurity.ticker}` : "Optionnel"}</p>
+                <span>{transactionType === "buy" ? "Total débité" : "Total encaissé"}</span>
+                <p>{displayEuro(tradeCashImpact, isPrivacyMode)}</p>
 
-                  <span>Cash estimé après</span>
-                  <p>{projectedCashAccountBalance === null ? "—" : displayEuro(projectedCashAccountBalance, isPrivacyMode)}</p>
-                </>
+                <span>Cash avant</span>
+                <p>{displayEuro(tradeCashBeforeOperation, isPrivacyMode)}</p>
+
+                <span>Cash estimé après</span>
+                <p className={projectedTradeCash < -0.000001 ? "negative" : undefined}>
+                  {displayEuro(projectedTradeCash, isPrivacyMode)}
+                </p>
+              </div>
+
+              {saleExceedsAvailableQuantity ? (
+                <p className="transaction-recap-warning">
+                  La quantité vendue dépasse la position disponible. La validation sera bloquée.
+                </p>
               ) : null}
-            </div>
+
+              {transactionType === "buy" && projectedTradeCash < -0.000001 ? (
+                <p className="transaction-recap-warning">
+                  Cet achat ferait passer le cash du compte en négatif.
+                </p>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <div className="transaction-recap-grid">
+                <span>Opération</span>
+                <p>{labelForTransactionType(transactionType)}</p>
+
+                <span>Montant</span>
+                <p>{displayEuro(safeAmount, isPrivacyMode)}</p>
+
+                {isIncomeOrFee ? (
+                  <>
+                    <span>Actif lié</span>
+                    <p>{selectedSecurity ? `${selectedSecurity.name} · ${selectedSecurity.ticker}` : "Optionnel"}</p>
+                  </>
+                ) : null}
+
+                {cashImpactRows.map((row) => (
+                  <Fragment key={row.account.id}>
+                    <span>{row.account.name}</span>
+                    <p>
+                      {displayEuro(row.balanceBefore, isPrivacyMode)}
+                      {" → "}
+                      <strong>{displayEuro(row.balanceAfter, isPrivacyMode)}</strong>
+                      {" "}
+                      <small className={row.delta >= 0 ? "positive" : "negative"}>
+                        ({row.delta >= 0 ? "+" : "−"}{displayEuro(Math.abs(row.delta), isPrivacyMode)})
+                      </small>
+                    </p>
+                  </Fragment>
+                ))}
+              </div>
+
+              {cashImpactRows.some((row) => row.balanceAfter < -0.000001) ? (
+                <p className="transaction-recap-warning">
+                  Cette opération ferait passer au moins un compte en négatif.
+                </p>
+              ) : null}
+            </>
           )}
         </div>
 
@@ -4267,11 +4669,19 @@ function ImportExportPage({
   const [importError, setImportError] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
+  const [includePossibleDuplicates, setIncludePossibleDuplicates] = useState(false);
 
   const missingCsvHeaders = getMissingCsvHeaders(csvText);
-  const importCandidates = missingCsvHeaders.length === 0 ? validateCsvTransactions(csvText, accounts, securities) : [];
-  const previewRows = importCandidates.slice(0, 8);
+  const importCandidates = missingCsvHeaders.length === 0
+    ? validateCsvTransactions(csvText, accounts, securities, transactions)
+    : [];
+  const previewRows = importCandidates.slice(0, 12);
   const validRows = importCandidates.filter((row) => row.status === "valid");
+  const duplicateRows = importCandidates.filter((row) => row.status === "duplicate");
+  const errorRows = importCandidates.filter((row) => row.status === "error");
+  const importableRows = includePossibleDuplicates
+    ? [...validRows, ...duplicateRows]
+    : validRows;
 
   async function handleCsvFile(event: FormEvent<HTMLInputElement>) {
     const file = event.currentTarget.files?.[0];
@@ -4285,12 +4695,13 @@ function ImportExportPage({
     setCsvText(content);
     setImportError(null);
     setImportResult(null);
+    setIncludePossibleDuplicates(false);
     event.currentTarget.value = "";
   }
 
   async function importCsvTransactions() {
-    if (validRows.length === 0) {
-      setImportError("Aucune ligne valide à importer.");
+    if (importableRows.length === 0) {
+      setImportError("Aucune ligne prête à importer.");
       return;
     }
 
@@ -4299,7 +4710,7 @@ function ImportExportPage({
     setImportResult(null);
 
     try {
-      for (const candidate of validRows) {
+      for (const candidate of importableRows) {
         if (!candidate.payload) {
           continue;
         }
@@ -4314,7 +4725,14 @@ function ImportExportPage({
       }
 
       await onImported();
-      setImportResult(`${validRows.length} transaction(s) importée(s).`);
+      setImportResult(
+        `${importableRows.length} transaction(s) importée(s).`
+        + (
+          duplicateRows.length > 0 && !includePossibleDuplicates
+            ? ` ${duplicateRows.length} doublon(s) probable(s) ignoré(s).`
+            : ""
+        )
+      );
     } catch (error) {
       setImportError(String(error));
     } finally {
@@ -4372,9 +4790,37 @@ function ImportExportPage({
         actif: "LVMH",
         quantite: "1",
         prix: "488.85",
-        frais: "0",
+        frais: "0.99",
         montant: "",
         note: "Exemple achat",
+      },
+      {
+        date: "2026-07-09",
+        type: "dividend",
+        compte: "PEA",
+        compte_source: "",
+        compte_destination: "PEA",
+        ticker: "MC.PA",
+        actif: "LVMH",
+        quantite: "",
+        prix: "",
+        frais: "",
+        montant: "12.50",
+        note: "Exemple dividende",
+      },
+      {
+        date: "2026-07-10",
+        type: "fee",
+        compte: "CTO",
+        compte_source: "CTO",
+        compte_destination: "",
+        ticker: "",
+        actif: "",
+        quantite: "",
+        prix: "",
+        frais: "",
+        montant: "2.00",
+        note: "Exemple frais de courtage",
       },
     ]);
   }
@@ -4406,7 +4852,7 @@ function ImportExportPage({
 
         <article className="card import-export-card">
           <h2>Importer</h2>
-          <p>Collez un CSV, vérifiez les lignes, puis importez uniquement les lignes valides.</p>
+          <p>Ouvrez un CSV, contrôlez les erreurs et les doublons, puis importez les lignes prêtes.</p>
 
           <textarea
             className="csv-preview-input"
@@ -4445,20 +4891,38 @@ function ImportExportPage({
             </p>
           ) : null}
 
+          {duplicateRows.length > 0 ? (
+            <label className="csv-duplicate-option">
+              <input
+                checked={includePossibleDuplicates}
+                onChange={(event) => setIncludePossibleDuplicates(event.target.checked)}
+                type="checkbox"
+              />
+              <span>
+                Importer aussi les {duplicateRows.length} doublon(s) possible(s)
+                <small>
+                  À activer uniquement si plusieurs opérations identiques ont réellement eu lieu.
+                </small>
+              </span>
+            </label>
+          ) : null}
+
           <div className="csv-preview-toolbar">
             <div className="csv-preview-status">
               {importCandidates.length > 0
-                ? `${validRows.length}/${importCandidates.length} ligne(s) valide(s)`
+                ? `${validRows.length} prête(s) · ${duplicateRows.length} doublon(s) · ${errorRows.length} erreur(s)`
                 : "Aucune ligne détectée"}
             </div>
 
             <button
               className="primary-action"
-              disabled={isImporting || validRows.length === 0 || missingCsvHeaders.length > 0}
+              disabled={isImporting || importableRows.length === 0 || missingCsvHeaders.length > 0}
               onClick={importCsvTransactions}
               type="button"
             >
-              {isImporting ? "Import..." : "Importer les lignes valides"}
+              {isImporting
+                ? "Import..."
+                : `Importer ${importableRows.length} ligne(s)`}
             </button>
           </div>
 
@@ -4487,8 +4951,12 @@ function ImportExportPage({
                   {previewRows.map((candidate, index) => (
                     <tr key={index}>
                       <td>
-                        <span className={candidate.status === "valid" ? "csv-status valid" : "csv-status error"}>
-                          {candidate.status === "valid" ? "OK" : "Erreur"}
+                        <span className={`csv-status ${candidate.status}`}>
+                          {candidate.status === "valid"
+                            ? "Prêt"
+                            : candidate.status === "duplicate"
+                              ? "Doublon"
+                              : "Erreur"}
                         </span>
                       </td>
                       <td>{candidate.row.date || "—"}</td>
@@ -4957,16 +5425,169 @@ function findSecurityIdByCsvValue(securities: DbSecurity[], ticker: string | und
   return null;
 }
 
+
+function normalizeCsvDate(value: string | undefined) {
+  const normalized = normalizeCsvValue(value);
+
+  if (!normalized) {
+    return "";
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    return normalized;
+  }
+
+  const frenchDate = normalized.match(/^(\d{1,2})[/.](\d{1,2})[/.](\d{4})$/);
+
+  if (frenchDate) {
+    const [, day, month, year] = frenchDate;
+    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  }
+
+  return normalized;
+}
+
+function csvFingerprintNumber(value: number | null | undefined) {
+  return Number(value ?? 0).toFixed(8);
+}
+
+function transactionPrimaryAccount(
+  type: string,
+  accountId: string | null | undefined,
+  fromAccountId: string | null | undefined,
+  toAccountId: string | null | undefined,
+) {
+  if (type === "deposit" || type === "dividend") {
+    return toAccountId ?? accountId ?? "";
+  }
+
+  if (type === "withdrawal" || type === "fee") {
+    return fromAccountId ?? accountId ?? "";
+  }
+
+  if (type === "buy" || type === "sell") {
+    return accountId ?? "";
+  }
+
+  return "";
+}
+
+function transactionFingerprintFromPayload(
+  payload: NewCashTransaction | NewTradeTransaction,
+) {
+  const isTradePayload = "account_id" in payload;
+  const accountId = isTradePayload ? payload.account_id : null;
+  const fromAccountId = "from_account_id" in payload ? payload.from_account_id : null;
+  const toAccountId = "to_account_id" in payload ? payload.to_account_id : null;
+  const securityId = payload.security_id ?? "";
+  const quantity = "quantity" in payload ? payload.quantity : 0;
+  const price = "price" in payload ? payload.price : 0;
+  const fees = "fees" in payload ? payload.fees : 0;
+  const amount = "amount" in payload ? payload.amount : 0;
+
+  return [
+    normalizeCsvDate(payload.date),
+    payload.transaction_type,
+    transactionPrimaryAccount(
+      payload.transaction_type,
+      accountId,
+      fromAccountId,
+      toAccountId,
+    ),
+    fromAccountId ?? "",
+    toAccountId ?? "",
+    securityId,
+    csvFingerprintNumber(quantity),
+    csvFingerprintNumber(price),
+    csvFingerprintNumber(fees),
+    csvFingerprintNumber(
+      payload.transaction_type === "buy" || payload.transaction_type === "sell"
+        ? 0
+        : amount,
+    ),
+  ].join("|");
+}
+
+function transactionFingerprintFromExisting(transaction: DbTransaction) {
+  return [
+    normalizeCsvDate(transaction.date),
+    transaction.transaction_type,
+    transactionPrimaryAccount(
+      transaction.transaction_type,
+      transaction.account_id,
+      transaction.from_account_id,
+      transaction.to_account_id,
+    ),
+    transaction.from_account_id ?? "",
+    transaction.to_account_id ?? "",
+    transaction.security_id ?? "",
+    csvFingerprintNumber(transaction.quantity),
+    csvFingerprintNumber(transaction.price),
+    csvFingerprintNumber(transaction.fees),
+    csvFingerprintNumber(
+      transaction.transaction_type === "buy" || transaction.transaction_type === "sell"
+        ? 0
+        : transaction.amount,
+    ),
+  ].join("|");
+}
+
 function validateCsvTransactions(
   csvText: string,
   accounts: DashboardData["accounts"],
   securities: DbSecurity[],
+  existingTransactions: DbTransaction[],
 ): CsvImportCandidate[] {
   const rows = parseCsvPreview(csvText);
 
+  const existingFingerprints = new Set(
+    existingTransactions
+      .filter((transaction) =>
+        ["deposit", "withdrawal", "transfer", "buy", "sell", "dividend", "fee"]
+          .includes(transaction.transaction_type)
+      )
+      .map(transactionFingerprintFromExisting)
+  );
+
+  const fingerprintsInsideFile = new Set<string>();
+
+  function finishCandidate(
+    row: Record<string, string>,
+    payload: NewCashTransaction | NewTradeTransaction,
+  ): CsvImportCandidate {
+    const fingerprint = transactionFingerprintFromPayload(payload);
+
+    if (existingFingerprints.has(fingerprint)) {
+      return {
+        row,
+        status: "duplicate",
+        message: "Opération probablement déjà présente dans Atlas.",
+        payload,
+      };
+    }
+
+    if (fingerprintsInsideFile.has(fingerprint)) {
+      return {
+        row,
+        status: "duplicate",
+        message: "Doublon probable dans ce fichier.",
+        payload,
+      };
+    }
+
+    fingerprintsInsideFile.add(fingerprint);
+
+    return {
+      row,
+      status: "valid",
+      message: "Prêt à importer.",
+      payload,
+    };
+  }
+
   return rows.map((row) => {
     const type = normalizeCsvValue(row.type).toLowerCase() as TransactionFormType;
-    const date = normalizeCsvValue(row.date);
+    const date = normalizeCsvDate(row.date);
     const amount = parseCsvNumber(row.montant);
     const quantity = parseCsvNumber(row.quantite);
     const price = parseCsvNumber(row.prix);
@@ -4974,125 +5595,220 @@ function validateCsvTransactions(
     const note = normalizeCsvValue(row.note) || null;
 
     if (!date) {
-      return { row, status: "error", message: "Date manquante." };
+      return {
+        row,
+        status: "error",
+        message: "Date manquante.",
+      };
     }
 
-    if (!["deposit", "withdrawal", "transfer", "buy", "sell"].includes(type)) {
-      return { row, status: "error", message: "Type invalide." };
+    if (
+      ![
+        "deposit",
+        "withdrawal",
+        "transfer",
+        "buy",
+        "sell",
+        "dividend",
+        "fee",
+      ].includes(type)
+    ) {
+      return {
+        row,
+        status: "error",
+        message: "Type invalide.",
+      };
     }
 
     if (fees < 0) {
-      return { row, status: "error", message: "Frais négatifs." };
+      return {
+        row,
+        status: "error",
+        message: "Frais négatifs.",
+      };
     }
 
     if (type === "buy" || type === "sell") {
       const accountId = findAccountIdByCsvName(accounts, row.compte);
-      const securityId = findSecurityIdByCsvValue(securities, row.ticker, row.actif);
+      const securityId = findSecurityIdByCsvValue(
+        securities,
+        row.ticker,
+        row.actif,
+      );
 
       if (!accountId) {
-        return { row, status: "error", message: "Compte introuvable." };
+        return {
+          row,
+          status: "error",
+          message: "Compte introuvable.",
+        };
       }
 
       if (!securityId) {
-        return { row, status: "error", message: "Actif introuvable. Créez-le d’abord via la recherche Yahoo." };
+        return {
+          row,
+          status: "error",
+          message:
+            "Actif introuvable. Créez-le d’abord via la recherche Yahoo.",
+        };
       }
 
       if (!quantity || quantity <= 0) {
-        return { row, status: "error", message: "Quantité invalide." };
+        return {
+          row,
+          status: "error",
+          message: "Quantité invalide.",
+        };
       }
 
       if (!price || price <= 0) {
-        return { row, status: "error", message: "Prix invalide." };
+        return {
+          row,
+          status: "error",
+          message: "Prix invalide.",
+        };
       }
 
-      return {
-        row,
-        status: "valid",
-        message: "Prêt à importer.",
-        payload: {
-          transaction_type: type,
-          date,
-          account_id: accountId,
-          security_id: securityId,
-          quantity,
-          price,
-          fees,
-          note,
-        },
-      };
+      return finishCandidate(row, {
+        transaction_type: type,
+        date,
+        account_id: accountId,
+        security_id: securityId,
+        quantity,
+        price,
+        fees,
+        note,
+      });
     }
 
     if (!amount || amount <= 0) {
-      return { row, status: "error", message: "Montant invalide." };
+      return {
+        row,
+        status: "error",
+        message: "Montant invalide.",
+      };
     }
 
-    const fromAccountId = findAccountIdByCsvName(accounts, row.compte_source || row.compte);
-    const toAccountId = findAccountIdByCsvName(accounts, row.compte_destination || row.compte);
+    const fromAccountId = findAccountIdByCsvName(
+      accounts,
+      row.compte_source || row.compte,
+    );
+
+    const toAccountId = findAccountIdByCsvName(
+      accounts,
+      row.compte_destination || row.compte,
+    );
+
+    const optionalSecurityId = findSecurityIdByCsvValue(
+      securities,
+      row.ticker,
+      row.actif,
+    );
 
     if (type === "deposit") {
       if (!toAccountId) {
-        return { row, status: "error", message: "Compte destination introuvable." };
+        return {
+          row,
+          status: "error",
+          message: "Compte destination introuvable.",
+        };
       }
 
-      return {
-        row,
-        status: "valid",
-        message: "Prêt à importer.",
-        payload: {
-          transaction_type: type,
-          date,
-          from_account_id: null,
-          to_account_id: toAccountId,
-          amount,
-          note,
-        },
-      };
+      return finishCandidate(row, {
+        transaction_type: "deposit",
+        date,
+        from_account_id: null,
+        to_account_id: toAccountId,
+        amount,
+        note,
+      });
     }
 
     if (type === "withdrawal") {
       if (!fromAccountId) {
-        return { row, status: "error", message: "Compte source introuvable." };
+        return {
+          row,
+          status: "error",
+          message: "Compte source introuvable.",
+        };
       }
 
-      return {
-        row,
-        status: "valid",
-        message: "Prêt à importer.",
-        payload: {
-          transaction_type: type,
-          date,
-          from_account_id: fromAccountId,
-          to_account_id: null,
-          amount,
-          note,
-        },
-      };
+      return finishCandidate(row, {
+        transaction_type: "withdrawal",
+        date,
+        from_account_id: fromAccountId,
+        to_account_id: null,
+        amount,
+        note,
+      });
+    }
+
+    if (type === "dividend") {
+      if (!toAccountId) {
+        return {
+          row,
+          status: "error",
+          message: "Compte crédité introuvable.",
+        };
+      }
+
+      return finishCandidate(row, {
+        transaction_type: "dividend",
+        date,
+        from_account_id: null,
+        to_account_id: toAccountId,
+        security_id: optionalSecurityId,
+        amount,
+        note,
+      });
+    }
+
+    if (type === "fee") {
+      if (!fromAccountId) {
+        return {
+          row,
+          status: "error",
+          message: "Compte débité introuvable.",
+        };
+      }
+
+      return finishCandidate(row, {
+        transaction_type: "fee",
+        date,
+        from_account_id: fromAccountId,
+        to_account_id: null,
+        security_id: optionalSecurityId,
+        amount,
+        note,
+      });
     }
 
     if (!fromAccountId || !toAccountId) {
-      return { row, status: "error", message: "Compte source ou destination introuvable." };
+      return {
+        row,
+        status: "error",
+        message: "Compte source ou destination introuvable.",
+      };
     }
 
     if (fromAccountId === toAccountId) {
-      return { row, status: "error", message: "Source et destination identiques." };
+      return {
+        row,
+        status: "error",
+        message: "Source et destination identiques.",
+      };
     }
 
-    return {
-      row,
-      status: "valid",
-      message: "Prêt à importer.",
-      payload: {
-        transaction_type: type,
-        date,
-        from_account_id: fromAccountId,
-        to_account_id: toAccountId,
-        amount,
-        note,
-      },
-    };
+    return finishCandidate(row, {
+      transaction_type: "transfer",
+      date,
+      from_account_id: fromAccountId,
+      to_account_id: toAccountId,
+      amount,
+      note,
+    });
   });
 }
-
 
 const REQUIRED_TRANSACTION_CSV_HEADERS = [
   "date",
