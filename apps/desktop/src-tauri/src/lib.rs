@@ -261,6 +261,27 @@ struct UpdateTransactionInput {
     note: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct BatchTransactionInput {
+    transaction_type: String,
+    date: String,
+    account_id: Option<String>,
+    from_account_id: Option<String>,
+    to_account_id: Option<String>,
+    security_id: Option<String>,
+    amount: Option<f64>,
+    quantity: Option<f64>,
+    price: Option<f64>,
+    fees: Option<f64>,
+    note: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct BatchImportResult {
+    imported_count: usize,
+    backup_path: String,
+}
+
 #[derive(Debug, Clone)]
 struct StoredTransaction {
     id: String,
@@ -427,6 +448,10 @@ fn open_database() -> Result<Connection, String> {
         Connection::open(path).map_err(|error| format!("Impossible d'ouvrir SQLite : {error}"))?;
 
     ensure_flexible_account_types(&connection)?;
+
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(|error| format!("Impossible d'activer les clés étrangères SQLite : {error}"))?;
 
     Ok(connection)
 }
@@ -2955,6 +2980,215 @@ fn stored_transaction_from_update_input(
     })
 }
 
+fn prune_import_backups(directory: &PathBuf, keep_count: usize) {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return;
+    };
+
+    let mut backups = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.starts_with("atlas-before-import-") && name.ends_with(".sqlite"))
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+
+    backups.sort_by_key(|path| {
+        fs::metadata(path)
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(UNIX_EPOCH)
+    });
+
+    while backups.len() > keep_count {
+        let oldest = backups.remove(0);
+        let _ = fs::remove_file(oldest);
+    }
+}
+
+fn create_import_backup() -> Result<PathBuf, String> {
+    let database = database_path()?;
+    let local_directory = database
+        .parent()
+        .ok_or_else(|| "Dossier local de la base introuvable.".to_string())?;
+    let backup_directory = local_directory.join("backups");
+
+    fs::create_dir_all(&backup_directory)
+        .map_err(|error| format!("Impossible de créer le dossier de sauvegarde : {error}"))?;
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("Erreur horloge système : {error}"))?
+        .as_millis();
+
+    let backup_path = backup_directory.join(format!("atlas-before-import-{timestamp}.sqlite"));
+
+    fs::copy(&database, &backup_path)
+        .map_err(|error| format!("Impossible de sauvegarder la base avant import : {error}"))?;
+
+    let backup_connection = Connection::open(&backup_path)
+        .map_err(|error| format!("Impossible de vérifier la sauvegarde : {error}"))?;
+
+    let integrity_result = backup_connection
+        .query_row("PRAGMA quick_check;", [], |row| row.get::<_, String>(0))
+        .map_err(|error| format!("Impossible de contrôler la sauvegarde : {error}"))?;
+
+    if integrity_result.to_lowercase() != "ok" {
+        let _ = fs::remove_file(&backup_path);
+        return Err(format!(
+            "La sauvegarde de sécurité est invalide : {integrity_result}"
+        ));
+    }
+
+    drop(backup_connection);
+    prune_import_backups(&backup_directory, 10);
+
+    Ok(backup_path)
+}
+
+fn stored_transaction_from_batch_input(
+    input: BatchTransactionInput,
+    transaction_id: String,
+) -> Result<StoredTransaction, String> {
+    stored_transaction_from_update_input(UpdateTransactionInput {
+        id: transaction_id,
+        transaction_type: input.transaction_type,
+        date: input.date,
+        account_id: input.account_id,
+        from_account_id: input.from_account_id,
+        to_account_id: input.to_account_id,
+        security_id: input.security_id,
+        amount: input.amount,
+        quantity: input.quantity,
+        price: input.price,
+        fees: input.fees,
+        note: input.note,
+    })
+}
+
+fn insert_stored_transaction(
+    transaction: &rusqlite::Transaction,
+    stored: &StoredTransaction,
+) -> Result<(), String> {
+    transaction
+        .execute(
+            "
+            INSERT INTO transactions (
+              id,
+              date,
+              type,
+              from_account_id,
+              to_account_id,
+              account_id,
+              security_id,
+              quantity,
+              price,
+              fees,
+              amount,
+              note
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            ",
+            params![
+                &stored.id,
+                &stored.date,
+                &stored.transaction_type,
+                stored.from_account_id.as_deref(),
+                stored.to_account_id.as_deref(),
+                stored.account_id.as_deref(),
+                stored.security_id.as_deref(),
+                stored.quantity,
+                stored.price,
+                stored.fees,
+                stored.amount,
+                stored.note.as_deref(),
+            ],
+        )
+        .map_err(|error| format!("Erreur insertion de la transaction {} : {error}", stored.id))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn import_transactions_batch(
+    inputs: Vec<BatchTransactionInput>,
+) -> Result<BatchImportResult, String> {
+    if inputs.is_empty() {
+        return Err("Aucune transaction à importer.".to_string());
+    }
+
+    if inputs.len() > 100_000 {
+        return Err(
+            "Import trop volumineux : limite fixée à 100 000 transactions par fichier.".to_string(),
+        );
+    }
+
+    let import_timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("Erreur horloge système : {error}"))?
+        .as_nanos();
+
+    let mut indexed_inputs = inputs.into_iter().enumerate().collect::<Vec<_>>();
+
+    indexed_inputs.sort_by(|left, right| {
+        left.1
+            .date
+            .cmp(&right.1.date)
+            .then_with(|| left.0.cmp(&right.0))
+    });
+
+    let mut stored_transactions = Vec::with_capacity(indexed_inputs.len());
+
+    for (sorted_index, (original_index, input)) in indexed_inputs.into_iter().enumerate() {
+        let transaction_id = format!("tx-import-{import_timestamp}-{sorted_index}");
+
+        let stored = stored_transaction_from_batch_input(input, transaction_id)
+            .map_err(|error| format!("Opération {} invalide : {error}", original_index + 1))?;
+
+        stored_transactions.push((original_index, stored));
+    }
+
+    let checkpoint_connection = open_database()?;
+    let _ = checkpoint_connection.execute_batch("PRAGMA wal_checkpoint(FULL);");
+    drop(checkpoint_connection);
+
+    let backup_path = create_import_backup()?;
+
+    let mut connection = open_database()?;
+    let sqlite_transaction = connection
+        .transaction()
+        .map_err(|error| format!("Impossible de démarrer l'import SQLite : {error}"))?;
+
+    for (import_position, (original_index, stored)) in stored_transactions.iter().enumerate() {
+        apply_stored_transaction_effect(&sqlite_transaction, stored, 1.0).map_err(|error| {
+            format!(
+                "échec à l'opération {} (ordre d'import {}) : {error}",
+                original_index + 1,
+                import_position + 1
+            )
+        })?;
+
+        insert_stored_transaction(&sqlite_transaction, stored).map_err(|error| {
+            format!(
+                "échec à l'opération {} (ordre d'import {}) : {error}",
+                original_index + 1,
+                import_position + 1
+            )
+        })?;
+    }
+
+    sqlite_transaction
+        .commit()
+        .map_err(|error| format!("Erreur validation de l'import SQLite : {error}"))?;
+
+    Ok(BatchImportResult {
+        imported_count: stored_transactions.len(),
+        backup_path: backup_path.display().to_string(),
+    })
+}
+
 #[tauri::command]
 fn create_opening_position_adjustments() -> Result<usize, String> {
     let mut connection = open_database()?;
@@ -3853,6 +4087,7 @@ pub fn run() {
             create_security_from_online_result,
             create_cash_transaction,
             create_trade_transaction,
+            import_transactions_batch,
             update_transaction,
             delete_transaction,
             create_opening_position_adjustments,

@@ -219,6 +219,11 @@ export type NewTradeTransaction = {
   note?: string | null;
 };
 
+export type BatchImportResult = {
+  imported_count: number;
+  backup_path: string;
+};
+
 export type NewSecurityInput = {
   name: string;
   ticker: string;
@@ -283,6 +288,12 @@ export async function createCashTransaction(input: NewCashTransaction) {
 
 export async function createTradeTransaction(input: NewTradeTransaction) {
   return invoke<string>("create_trade_transaction", { input });
+}
+
+export async function importTransactionsBatch(
+  inputs: Array<NewCashTransaction | NewTradeTransaction>,
+) {
+  return invoke<BatchImportResult>("import_transactions_batch", { inputs });
 }
 
 export async function createSecurity(input: NewSecurityInput) {

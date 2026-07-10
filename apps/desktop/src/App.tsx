@@ -16,6 +16,7 @@ import {
   getPositionsPage,
   getSecurities,
   getTransactions,
+  importTransactionsBatch,
   searchOnlineAssets,
   lookupOnlineAssetHistory,
   updateAccount,
@@ -5202,38 +5203,40 @@ function ImportExportPage({
       return;
     }
 
+    const payloads = importableRows.flatMap((candidate) => (
+      candidate.payload ? [candidate.payload] : []
+    ));
+
+    if (payloads.length === 0) {
+      setImportError("Aucune transaction exploitable dans la sélection.");
+      return;
+    }
+
     setIsImporting(true);
     setImportError(null);
     setImportResult(null);
 
     try {
-      for (const candidate of importableRows) {
-        if (!candidate.payload) {
-          continue;
-        }
-
-        const payload = candidate.payload;
-
-        if (payload.transaction_type === "buy" || payload.transaction_type === "sell") {
-          await createTradeTransaction(payload as NewTradeTransaction);
-        } else {
-          await createCashTransaction(payload as NewCashTransaction);
-        }
-      }
+      const result = await importTransactionsBatch(payloads);
 
       await onImported();
+
       setImportResult(
-        `${importableRows.length} transaction(s) importée(s).`
+        `${result.imported_count} transaction(s) importée(s) en une seule opération.`
+        + ` Sauvegarde créée : ${result.backup_path}.`
         + (
           duplicateRows.length > 0 && !includePossibleDuplicates
             ? ` ${duplicateRows.length} doublon(s) probable(s) ignoré(s).`
             : ""
         )
       );
+
       setCsvText("");
       setIncludePossibleDuplicates(false);
     } catch (error) {
-      setImportError(String(error));
+      setImportError(
+        `Import annulé : aucune ligne n'a été enregistrée. ${String(error)}`
+      );
     } finally {
       setIsImporting(false);
     }
@@ -5421,6 +5424,14 @@ function ImportExportPage({
             </label>
           ) : null}
 
+          <div className="csv-secure-import-note">
+            <strong>Import sécurisé</strong>
+            <span>
+              Les lignes prêtes sont envoyées en une fois. Atlas crée une sauvegarde
+              automatique, puis importe tout ou annule tout si une opération échoue.
+            </span>
+          </div>
+
           <div className="csv-preview-toolbar">
             <div className="csv-preview-status">
               {importCandidates.length > 0
@@ -5435,7 +5446,7 @@ function ImportExportPage({
               type="button"
             >
               {isImporting
-                ? "Import..."
+                ? "Import sécurisé..."
                 : `Importer ${importableRows.length} ligne(s)`}
             </button>
           </div>

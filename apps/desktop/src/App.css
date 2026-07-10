@@ -6284,3 +6284,41 @@ td:first-child { color: #374151; font-weight: 600; }
   .account-manager-form-actions { display: grid; grid-template-columns: 1fr; }
   .account-manager-form-actions button { width: 100%; }
 }
+
+
+/* Atomic CSV import */
+.csv-secure-import-note {
+  display: grid;
+  gap: 4px;
+  margin: 14px 0;
+  border: 1px solid rgba(79, 143, 219, .24);
+  border-radius: 12px;
+  background: rgba(79, 143, 219, .07);
+  padding: 12px 14px;
+}
+
+.csv-secure-import-note strong {
+  color: #244c7b;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.csv-secure-import-note span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.app-shell.dark .csv-secure-import-note {
+  border-color: rgba(125, 167, 245, .28);
+  background: rgba(125, 167, 245, .1);
+}
+
+.app-shell.dark .csv-secure-import-note strong {
+  color: #dbeafe;
+}
+
+.app-shell.dark .csv-secure-import-note span {
+  color: #a8b3c1;
+}
