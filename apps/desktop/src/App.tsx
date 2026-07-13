@@ -14,6 +14,7 @@ import {
   deleteTransaction,
   getAccounts,
   getDashboardData,
+  getScopedDashboardData,
   getPositionsPage,
   getSecurities,
   getTransactions,
@@ -101,6 +102,41 @@ const defaultPortfolioSettings: PortfolioSettings = {
   defaultMonthlyContribution: monthlyContribution.amount,
   defaultAnnualReturnPercent: 6,
 };
+
+const portfolioScopeStorageKey = "portfolio.scopeAccountIds";
+
+function readPortfolioScope(): string[] | null {
+  try {
+    const rawValue = window.localStorage.getItem(portfolioScopeStorageKey);
+
+    if (!rawValue) return null;
+
+    const parsedValue = JSON.parse(rawValue);
+
+    if (!Array.isArray(parsedValue)) {
+      window.localStorage.removeItem(portfolioScopeStorageKey);
+      return null;
+    }
+
+    const accountIds = parsedValue.filter(
+      (value): value is string => typeof value === "string" && value.length > 0,
+    );
+
+    return accountIds.length > 0 ? accountIds : null;
+  } catch {
+    window.localStorage.removeItem(portfolioScopeStorageKey);
+    return null;
+  }
+}
+
+function storePortfolioScope(accountIds: string[] | null) {
+  if (!accountIds) {
+    window.localStorage.removeItem(portfolioScopeStorageKey);
+    return;
+  }
+
+  window.localStorage.setItem(portfolioScopeStorageKey, JSON.stringify(accountIds));
+}
 
 type AllocationDisplayRow = {
   bucket: string;
@@ -222,7 +258,16 @@ function App() {
   const [topbarSearchError, setTopbarSearchError] = useState<string | null>(null);
   const [isTopbarSearching, setIsTopbarSearching] = useState(false);
   const [portfolioSettings, setPortfolioSettings] = useState(() => readPortfolioSettings());
+  const selectedScopeAccountIdsRef = useRef<string[] | null>(readPortfolioScope());
+  const [selectedScopeAccountIds, setSelectedScopeAccountIds] = useState<string[] | null>(
+    selectedScopeAccountIdsRef.current,
+  );
+  const [draftScopeAccountIds, setDraftScopeAccountIds] = useState<string[]>([]);
+  const [isScopeMenuOpen, setIsScopeMenuOpen] = useState(false);
+  const [isApplyingScope, setIsApplyingScope] = useState(false);
+  const [scopeError, setScopeError] = useState<string | null>(null);
   const topbarSearchRef = useRef<HTMLFormElement | null>(null);
+  const scopeMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     setVisitedPages((current) => {
@@ -269,6 +314,32 @@ function App() {
       document.removeEventListener("keydown", handleTopbarEscape);
     };
   }, []);
+
+  useEffect(() => {
+    if (!isScopeMenuOpen) return;
+
+    function closeScopeMenu(event: MouseEvent) {
+      const target = event.target;
+
+      if (target instanceof Node && !scopeMenuRef.current?.contains(target)) {
+        setIsScopeMenuOpen(false);
+      }
+    }
+
+    function closeScopeMenuWithEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsScopeMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", closeScopeMenu);
+    document.addEventListener("keydown", closeScopeMenuWithEscape);
+
+    return () => {
+      document.removeEventListener("mousedown", closeScopeMenu);
+      document.removeEventListener("keydown", closeScopeMenuWithEscape);
+    };
+  }, [isScopeMenuOpen]);
 
   async function openTopbarMarketChart(asset: OnlineAssetSearchResult, period = topbarMarketPeriod) {
     setTopbarSelectedAsset(asset);
@@ -334,7 +405,9 @@ function App() {
       securitiesResult,
       positionsResult,
     ] = await Promise.allSettled([
-      getDashboardData(),
+      selectedScopeAccountIdsRef.current
+        ? getScopedDashboardData(selectedScopeAccountIdsRef.current)
+        : getDashboardData(),
       getAccounts(),
       getTransactions(),
       getSecurities(),
@@ -378,6 +451,44 @@ function App() {
     }
   
   }, []);
+
+  const applyPortfolioScope = useCallback(async () => {
+    if (draftScopeAccountIds.length === 0) {
+      setScopeError("Sélectionne au moins un compte.");
+      return;
+    }
+
+    const allAccountIds = managedAccounts.map((account) => account.id);
+    const allAccountsSelected =
+      allAccountIds.length === draftScopeAccountIds.length &&
+      allAccountIds.every((accountId) => draftScopeAccountIds.includes(accountId));
+
+    const previousScope = selectedScopeAccountIdsRef.current;
+    const nextScope = allAccountsSelected ? null : [...draftScopeAccountIds];
+
+    selectedScopeAccountIdsRef.current = nextScope;
+    setSelectedScopeAccountIds(nextScope);
+    storePortfolioScope(nextScope);
+    setIsApplyingScope(true);
+    setScopeError(null);
+
+    try {
+      const nextDashboardData = nextScope
+        ? await getScopedDashboardData(nextScope)
+        : await getDashboardData();
+
+      setDashboardData(nextDashboardData);
+      setDatabaseError(null);
+      setIsScopeMenuOpen(false);
+    } catch (error) {
+      selectedScopeAccountIdsRef.current = previousScope;
+      setSelectedScopeAccountIds(previousScope);
+      storePortfolioScope(previousScope);
+      setScopeError(String(error));
+    } finally {
+      setIsApplyingScope(false);
+    }
+  }, [draftScopeAccountIds, managedAccounts]);
 
   const refreshOpenPositionPrices = useCallback(async (silent = false) => {
     setIsUpdatingPrices(true);
@@ -433,6 +544,39 @@ function App() {
   useEffect(() => {
     savePortfolioSettings(portfolioSettings);
   }, [portfolioSettings]);
+
+  useEffect(() => {
+    if (managedAccounts.length === 0) return;
+
+    const allAccountIds = managedAccounts.map((account) => account.id);
+    const selectedIds = selectedScopeAccountIdsRef.current;
+
+    if (!selectedIds) {
+      setDraftScopeAccountIds(allAccountIds);
+      return;
+    }
+
+    const validIds = new Set(allAccountIds);
+    const sanitizedIds = selectedIds.filter((accountId) => validIds.has(accountId));
+
+    if (sanitizedIds.length === 0) {
+      selectedScopeAccountIdsRef.current = null;
+      setSelectedScopeAccountIds(null);
+      setDraftScopeAccountIds(allAccountIds);
+      storePortfolioScope(null);
+      void refreshData();
+      return;
+    }
+
+    if (sanitizedIds.length !== selectedIds.length) {
+      selectedScopeAccountIdsRef.current = sanitizedIds;
+      setSelectedScopeAccountIds(sanitizedIds);
+      storePortfolioScope(sanitizedIds);
+      void refreshData();
+    }
+
+    setDraftScopeAccountIds(sanitizedIds);
+  }, [managedAccounts, refreshData]);
 
   const mockSummary = useMemo(() => getPortfolioSummary(), []);
   const mockPositionRows = useMemo(() => getPositionRows(), []);
@@ -496,6 +640,46 @@ function App() {
     () => dashboardData?.snapshots ?? [],
     [dashboardData],
   );
+  const selectedScopeSet = useMemo(
+    () => (selectedScopeAccountIds ? new Set(selectedScopeAccountIds) : null),
+    [selectedScopeAccountIds],
+  );
+
+  const visiblePositionsPageRows = useMemo(
+    () =>
+      selectedScopeSet
+        ? positionsPageRows.filter((position) => selectedScopeSet.has(position.account_id))
+        : positionsPageRows,
+    [positionsPageRows, selectedScopeSet],
+  );
+
+  const visibleTransactions = useMemo(
+    () =>
+      selectedScopeSet
+        ? transactions.filter((transaction) =>
+            [
+              transaction.account_id,
+              transaction.from_account_id,
+              transaction.to_account_id,
+            ].some((accountId) => accountId && selectedScopeSet.has(accountId)),
+          )
+        : transactions,
+    [transactions, selectedScopeSet],
+  );
+
+  const scopeLabel = useMemo(() => {
+    if (!selectedScopeAccountIds) return "Tous les comptes";
+
+    if (selectedScopeAccountIds.length === 1) {
+      return (
+        managedAccounts.find((account) => account.id === selectedScopeAccountIds[0])?.name ??
+        "1 compte"
+      );
+    }
+
+    return `${selectedScopeAccountIds.length} comptes`;
+  }, [managedAccounts, selectedScopeAccountIds]);
+
   const topbarPrimaryResult =
     topbarSelectedAsset ?? topbarSearchResults[0] ?? null;
   return (
@@ -593,6 +777,107 @@ function App() {
               ) : null}
             </form>
 
+            <div className="portfolio-scope" ref={scopeMenuRef}>
+              <button
+                className={
+                  selectedScopeAccountIds
+                    ? "portfolio-scope-button active"
+                    : "portfolio-scope-button"
+                }
+                onClick={() => {
+                  setDraftScopeAccountIds(
+                    selectedScopeAccountIds ??
+                      managedAccounts.map((account) => account.id),
+                  );
+                  setScopeError(null);
+                  setIsScopeMenuOpen((value) => !value);
+                }}
+                title="Choisir les comptes inclus dans les données affichées"
+                type="button"
+              >
+                <span>Périmètre :</span>
+                <strong>{scopeLabel}</strong>
+                <span className="portfolio-scope-chevron">▼</span>
+              </button>
+
+              {isScopeMenuOpen ? (
+                <div className="portfolio-scope-panel">
+                  <div className="portfolio-scope-heading">
+                    <strong>Périmètre du portefeuille</strong>
+                    <p>
+                      Les totaux, positions, transactions et graphiques seront
+                      limités aux comptes cochés.
+                    </p>
+                  </div>
+
+                  <div className="portfolio-scope-list">
+                    {managedAccounts.length > 0 ? (
+                      managedAccounts.map((account) => (
+                        <label className="portfolio-scope-row" key={account.id}>
+                          <input
+                            checked={draftScopeAccountIds.includes(account.id)}
+                            onChange={() =>
+                              setDraftScopeAccountIds((current) =>
+                                current.includes(account.id)
+                                  ? current.filter(
+                                      (accountId) => accountId !== account.id,
+                                    )
+                                  : [...current, account.id],
+                              )
+                            }
+                            type="checkbox"
+                          />
+                          <span>
+                            <strong>{account.name}</strong>
+                            <small>
+                              {account.account_type}
+                              {!account.include_in_net_worth
+                                ? " · hors patrimoine global"
+                                : ""}
+                            </small>
+                          </span>
+                        </label>
+                      ))
+                    ) : (
+                      <p className="portfolio-scope-empty">
+                        Aucun compte disponible.
+                      </p>
+                    )}
+                  </div>
+
+                  {scopeError ? (
+                    <p className="portfolio-scope-error">{scopeError}</p>
+                  ) : null}
+
+                  <div className="portfolio-scope-actions">
+                    <button
+                      className="portfolio-scope-select-all"
+                      onClick={() =>
+                        setDraftScopeAccountIds(
+                          managedAccounts.map((account) => account.id),
+                        )
+                      }
+                      type="button"
+                    >
+                      Tout sélectionner
+                    </button>
+                    <button
+                      className="portfolio-scope-apply"
+                      disabled={
+                        isApplyingScope ||
+                        managedAccounts.length === 0 ||
+                        draftScopeAccountIds.length === 0
+                      }
+                      onClick={() => void applyPortfolioScope()}
+                      type="button"
+                    >
+                      {isApplyingScope ? "Application..." : "Appliquer"}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
 <button
               className="theme-toggle topbar-text-toggle"
               onClick={() => setIsDarkMode((value) => !value)}
@@ -644,10 +929,10 @@ function App() {
                 allocationRows={allocationRowsWithSettings}
                 isPrivacyMode={isPrivacyMode}
                 onNavigate={setCurrentPage}
-                positions={positionsPageRows}
+                positions={visiblePositionsPageRows}
                 snapshots={chartSnapshots}
                 summary={summary}
-                transactions={transactions}
+                transactions={visibleTransactions}
               />
             </div>
           ) : null}
@@ -655,7 +940,7 @@ function App() {
           {(visitedPages.has("Positions") || currentPage === "Positions") ? (
             <div className="cached-page" hidden={currentPage !== "Positions"}>
               <MemoPositionsPage
-                positions={positionsPageRows}
+                positions={visiblePositionsPageRows}
                 positionsError={positionsError}
                 priceUpdateSummary={priceUpdateSummary}
                 isPrivacyMode={isPrivacyMode}
@@ -669,9 +954,9 @@ function App() {
                 accounts={accounts}
                 isPrivacyMode={isPrivacyMode}
                 onTransactionCreated={refreshData}
-                positions={positionsPageRows}
+                positions={visiblePositionsPageRows}
                 securities={securities}
-                transactions={transactions}
+                transactions={visibleTransactions}
                 transactionsError={transactionsError}
               />
             </div>
@@ -683,7 +968,7 @@ function App() {
                 accounts={accounts}
                 allocationRows={allocationRowsWithSettings}
                 isPrivacyMode={isPrivacyMode}
-                positions={positionsPageRows}
+                positions={visiblePositionsPageRows}
                 summary={summary}
               />
             </div>
@@ -694,10 +979,10 @@ function App() {
               <MemoPerformancePage
                 accounts={accounts}
                 isPrivacyMode={isPrivacyMode}
-                positions={positionsPageRows}
+                positions={visiblePositionsPageRows}
                 snapshots={chartSnapshots}
                 summary={summary}
-                transactions={transactions}
+                transactions={visibleTransactions}
               />
             </div>
           ) : null}
@@ -708,7 +993,7 @@ function App() {
                 accounts={accounts}
                 allocationRows={allocationRowsWithSettings}
                 isPrivacyMode={isPrivacyMode}
-                positions={positionsPageRows}
+                positions={visiblePositionsPageRows}
                 summary={summary}
               />
             </div>
@@ -730,8 +1015,8 @@ function App() {
                 accounts={accounts}
                 isPrivacyMode={isPrivacyMode}
                 onRefresh={refreshData}
-                positions={positionsPageRows}
-                transactions={transactions}
+                positions={visiblePositionsPageRows}
+                transactions={visibleTransactions}
               />
             </div>
           ) : null}
@@ -741,9 +1026,9 @@ function App() {
               <MemoImportExportPage
                 accounts={accounts}
                 onImported={refreshData}
-                positions={positionsPageRows}
+                positions={visiblePositionsPageRows}
                 securities={securities}
-                transactions={transactions}
+                transactions={visibleTransactions}
               />
             </div>
           ) : null}
@@ -1293,12 +1578,27 @@ function DashboardPage({
               </div>
             </div>
 
-            <PortfolioChart
-              currentTotal={summary.total}
-              isPrivacyMode={isPrivacyMode}
-              period={chartPeriod}
-              snapshots={snapshots}
-            />
+            {snapshots.length >= 2 ? (
+              <PortfolioChart
+                currentTotal={summary.total}
+                isPrivacyMode={isPrivacyMode}
+                period={chartPeriod}
+                snapshots={snapshots}
+              />
+            ) : (
+              <div className="portfolio-chart-empty-state">
+                <strong>Historique insuffisant pour ce périmètre</strong>
+                <p>
+                  Atlas ne possède pas encore assez de snapshots par compte pour
+                  tracer une évolution fiable après avoir retiré certains comptes.
+                </p>
+                <span>Valeur actuelle : {displayEuro(summary.total, isPrivacyMode)}</span>
+                <small>
+                  Le graphique apparaîtra dès qu’au moins deux dates auront été
+                  enregistrées pour les comptes sélectionnés.
+                </small>
+              </div>
+            )}
           </article>
 
           
@@ -1328,7 +1628,9 @@ function DashboardPage({
                     <td>{position.quantity}</td>
                     <td>{position.value}</td>
                     <td>{position.weight}</td>
-                    <td className="positive">{position.performance}</td>
+                    <td className={position.performance.trim().startsWith("-") ? "" : "positive"}>
+                      {position.performance}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1740,44 +2042,107 @@ function parsePerformanceDate(value: string) {
   return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
-function externalCashFlowAmount(transaction: DbTransaction) {
+function externalCashFlowAmount(
+  transaction: DbTransaction,
+  selectedAccountIds: Set<string>,
+) {
+  const amount = Number(transaction.amount ?? 0);
+  const accountId = transaction.account_id;
+  const fromAccountId = transaction.from_account_id;
+  const toAccountId = transaction.to_account_id;
+
+  const accountSelected = Boolean(
+    accountId && selectedAccountIds.has(accountId),
+  );
+  const fromSelected = Boolean(
+    fromAccountId && selectedAccountIds.has(fromAccountId),
+  );
+  const toSelected = Boolean(
+    toAccountId && selectedAccountIds.has(toAccountId),
+  );
+
+  if (transaction.transaction_type === "opening_cash") {
+    return accountSelected ? amount : 0;
+  }
+
+  if (transaction.transaction_type === "opening_position") {
+    if (!accountSelected) return 0;
+
+    const quantity = Number(transaction.quantity ?? 0);
+    const price = Number(transaction.price ?? 0);
+    return quantity * price;
+  }
+
   if (transaction.transaction_type === "deposit") {
-    return transaction.amount;
+    const targetSelected = toSelected || (!toAccountId && accountSelected);
+    return targetSelected ? amount : 0;
   }
 
   if (transaction.transaction_type === "withdrawal") {
-    return -transaction.amount;
+    const sourceSelected = fromSelected || (!fromAccountId && accountSelected);
+    return sourceSelected ? -amount : 0;
+  }
+
+  if (transaction.transaction_type === "transfer") {
+    if (fromSelected && !toSelected) {
+      return -amount;
+    }
+
+    if (!fromSelected && toSelected) {
+      return amount;
+    }
+
+    return 0;
   }
 
   return 0;
 }
 
 function buildPerformanceAnalytics(
+  accounts: DashboardData["accounts"],
   currentTotal: number,
   snapshots: DashboardData["snapshots"],
   transactions: DbTransaction[],
 ): PerformanceAnalytics {
-  const sortedSnapshots = [...snapshots]
-    .map((snapshot) => ({
-      date: snapshot.date,
-      value: snapshot.total_value,
-    }))
-    .sort((left, right) => parsePerformanceDate(left.date) - parsePerformanceDate(right.date));
+  const selectedAccountIds = new Set(accounts.map((account) => account.id));
+  const snapshotsByDate = new Map<string, number>();
 
-  if (sortedSnapshots.length === 0) {
-    sortedSnapshots.push({
-      date: new Date().toISOString().slice(0, 10),
-      value: currentTotal,
-    });
+  for (const snapshot of snapshots) {
+    const parsedDate = parsePerformanceDate(snapshot.date);
+
+    if (parsedDate > 0 && Number.isFinite(snapshot.total_value)) {
+      snapshotsByDate.set(snapshot.date, snapshot.total_value);
+    }
   }
 
-  const flowTransactions = transactions
+  const today = new Date().toISOString().slice(0, 10);
+  snapshotsByDate.set(today, currentTotal);
+
+  const sortedSnapshots = [...snapshotsByDate.entries()]
+    .map(([snapshotDate, value]) => ({
+      date: snapshotDate,
+      value,
+    }))
+    .sort(
+      (left, right) =>
+        parsePerformanceDate(left.date) - parsePerformanceDate(right.date),
+    );
+
+  const externalFlows = transactions
     .map((transaction) => ({
       date: transaction.date,
-      value: externalCashFlowAmount(transaction),
+      value: externalCashFlowAmount(transaction, selectedAccountIds),
     }))
-    .filter((flow) => Math.abs(flow.value) > 0.000001)
-    .sort((left, right) => parsePerformanceDate(left.date) - parsePerformanceDate(right.date));
+    .filter(
+      (flow) =>
+        parsePerformanceDate(flow.date) > 0
+        && Number.isFinite(flow.value)
+        && Math.abs(flow.value) > 0.000001,
+    )
+    .sort(
+      (left, right) =>
+        parsePerformanceDate(left.date) - parsePerformanceDate(right.date),
+    );
 
   const twrSeries: PerformanceSeriesPoint[] = sortedSnapshots.length
     ? [{ date: sortedSnapshots[0].date, value: 0 }]
@@ -1788,20 +2153,42 @@ function buildPerformanceAnalytics(
   for (let index = 1; index < sortedSnapshots.length; index += 1) {
     const previous = sortedSnapshots[index - 1];
     const current = sortedSnapshots[index];
-
     const previousTimestamp = parsePerformanceDate(previous.date);
     const currentTimestamp = parsePerformanceDate(current.date);
+    const periodDuration = Math.max(
+      currentTimestamp - previousTimestamp,
+      24 * 60 * 60 * 1000,
+    );
 
-    const externalFlows = flowTransactions
-      .filter((flow) => {
-        const timestamp = parsePerformanceDate(flow.date);
-        return timestamp > previousTimestamp && timestamp <= currentTimestamp;
-      })
-      .reduce((sum, flow) => sum + flow.value, 0);
+    const periodFlows = externalFlows.filter((flow) => {
+      const timestamp = parsePerformanceDate(flow.date);
+      return timestamp > previousTimestamp && timestamp <= currentTimestamp;
+    });
 
-    if (previous.value > 0) {
-      const periodReturn = (current.value - externalFlows) / previous.value - 1;
-      cumulativeReturn *= 1 + periodReturn;
+    const netExternalFlow = periodFlows.reduce(
+      (sum, flow) => sum + flow.value,
+      0,
+    );
+
+    const weightedExternalFlow = periodFlows.reduce((sum, flow) => {
+      const timestamp = parsePerformanceDate(flow.date);
+      const remainingPeriodWeight = Math.min(
+        Math.max((currentTimestamp - timestamp) / periodDuration, 0),
+        1,
+      );
+
+      return sum + flow.value * remainingPeriodWeight;
+    }, 0);
+
+    const denominator = previous.value + weightedExternalFlow;
+
+    if (denominator > 0.000001) {
+      const periodReturn =
+        (current.value - previous.value - netExternalFlow) / denominator;
+
+      if (Number.isFinite(periodReturn) && periodReturn > -1) {
+        cumulativeReturn *= 1 + periodReturn;
+      }
     }
 
     twrSeries.push({
@@ -1810,18 +2197,34 @@ function buildPerformanceAnalytics(
     });
   }
 
-  let cumulativeExternalFlow = 0;
-  const externalFlowSeries = flowTransactions.map((flow) => {
-    cumulativeExternalFlow += flow.value;
+  const flowsByDate = new Map<string, number>();
 
-    return {
-      date: flow.date,
-      value: cumulativeExternalFlow,
-    };
-  });
+  for (const flow of externalFlows) {
+    flowsByDate.set(
+      flow.date,
+      (flowsByDate.get(flow.date) ?? 0) + flow.value,
+    );
+  }
+
+  let cumulativeExternalFlow = 0;
+  const externalFlowSeries = [...flowsByDate.entries()]
+    .sort(
+      ([leftDate], [rightDate]) =>
+        parsePerformanceDate(leftDate) - parsePerformanceDate(rightDate),
+    )
+    .map(([flowDate, value]) => {
+      cumulativeExternalFlow += value;
+
+      return {
+        date: flowDate,
+        value: cumulativeExternalFlow,
+      };
+    });
 
   return {
-    twrPercent: twrSeries.length ? twrSeries[twrSeries.length - 1].value : 0,
+    twrPercent: twrSeries.length
+      ? twrSeries[twrSeries.length - 1].value
+      : 0,
     twrSeries,
     externalFlowSeries,
   };
@@ -2551,36 +2954,70 @@ function buildRecommendationPlan(
     value: row.value ?? 0,
   }));
 
+  const postContributionTotal = Math.max(totalValue + contributionAmount, 0);
+
   const underweighted = normalizedRows
-    .map((row) => ({ ...row, missingPercent: row.targetPercent - row.actualPercent }))
-    .filter((row) => row.missingPercent > 0.5)
-    .sort((left, right) => right.missingPercent - left.missingPercent);
+    .map((row) => {
+      const missingPercent = row.targetPercent - row.actualPercent;
+      const targetValueAfterContribution =
+        postContributionTotal * (row.targetPercent / 100);
+      const missingAmount = Math.max(targetValueAfterContribution - row.value, 0);
+
+      return {
+        ...row,
+        missingPercent,
+        missingAmount,
+        targetValueAfterContribution,
+      };
+    })
+    .filter((row) => row.missingAmount > 0.01)
+    .sort((left, right) => right.missingAmount - left.missingAmount);
 
   const overweighted = normalizedRows
     .filter((row) => row.actualPercent - row.targetPercent > 1.5)
-    .sort((left, right) => (right.actualPercent - right.targetPercent) - (left.actualPercent - left.targetPercent));
+    .sort(
+      (left, right) =>
+        right.actualPercent -
+        right.targetPercent -
+        (left.actualPercent - left.targetPercent),
+    );
 
-  const totalMissing = underweighted.reduce((sum, row) => sum + row.missingPercent, 0);
   const hasPea = accounts.some((account) => account.account_type === "pea");
+  const actions: RecommendationAction[] = [];
+  let remainingContribution = contributionAmount;
 
-  const actions = contributionAmount > 0 && totalMissing > 0
-    ? underweighted
-        .map((row, index) => {
-          const rawAmount = contributionAmount * (row.missingPercent / totalMissing);
-          const amount = Math.round(rawAmount / 10) * 10;
+  for (const row of underweighted) {
+    if (remainingContribution <= 0.01) break;
 
-          return {
-            assetClass: row.bucket,
-            amount,
-            percent: contributionAmount > 0 ? (amount / contributionAmount) * 100 : 0,
-            title: titleForRecommendation(row.bucket),
-            instrumentHint: instrumentHintForRecommendation(row.bucket, hasPea),
-            reason: `${row.bucket} est sous la cible de ${formatUnsignedPercent(row.missingPercent)} : actuel ${formatUnsignedPercent(row.actualPercent)}, cible ${formatUnsignedPercent(row.targetPercent)}.`,
-            priority: index === 0 ? "high" : index === 1 ? "medium" : "low",
-          } satisfies RecommendationAction;
-        })
-        .filter((action) => action.amount > 0)
-    : [];
+    const amount = Math.round(
+      Math.min(remainingContribution, row.missingAmount) * 100,
+    ) / 100;
+
+    if (amount <= 0.01) continue;
+
+    actions.push({
+      assetClass: row.bucket,
+      amount,
+      percent:
+        contributionAmount > 0 ? (amount / contributionAmount) * 100 : 0,
+      title: titleForRecommendation(row.bucket),
+      instrumentHint: instrumentHintForRecommendation(row.bucket, hasPea),
+      reason:
+        `${row.bucket} manque d’environ ${formatEuro(row.missingAmount)} ` +
+        `pour atteindre sa cible après cet apport : actuel ` +
+        `${formatUnsignedPercent(row.actualPercent)}, cible ` +
+        `${formatUnsignedPercent(row.targetPercent)}.`,
+      priority:
+        actions.length === 0
+          ? "high"
+          : actions.length === 1
+            ? "medium"
+            : "low",
+    });
+
+    remainingContribution =
+      Math.round((remainingContribution - amount) * 100) / 100;
+  }
 
   const avoidances: RecommendationAvoidance[] = [];
 
@@ -2619,7 +3056,7 @@ function buildRecommendationPlan(
     avoidances,
     guidance,
     mainMessage: actions.length > 0
-      ? `Avec ${formatEuro(contributionAmount)}, la priorité est de corriger les classes sous-pondérées plutôt que de renforcer les lignes déjà visibles.`
+      ? `Avec ${formatEuro(contributionAmount)}, Atlas affecte d’abord l’apport à la poche la plus en retard. Il passe à la suivante uniquement si la première atteint sa cible.`
       : "Le portefeuille est proche de son allocation cible ou le montant d’apport est nul. Aucun achat prioritaire n’est proposé.",
     targetGapMessage: underweighted.length > 0
       ? `Classe la plus en retard : ${underweighted[0].bucket}, avec ${formatUnsignedPercent(underweighted[0].missingPercent)} sous la cible.`
@@ -3531,6 +3968,7 @@ function PerformancePage({
     summary.total,
   );
   const performanceAnalytics = buildPerformanceAnalytics(
+    accounts,
     summary.total,
     snapshots,
     transactions,
@@ -3691,8 +4129,8 @@ function PerformancePage({
             <div>
               <h2>TWR estimé</h2>
               <p className="muted">
-                Rendement du portefeuille en neutralisant les apports et
-                retraits.
+                Rendement chaîné corrigé des apports, retraits et
+                transferts qui entrent ou sortent du périmètre.
               </p>
             </div>
             <strong>{formatSignedPercent(performanceAnalytics.twrPercent)}</strong>
@@ -3710,8 +4148,8 @@ function PerformancePage({
             <div>
               <h2>Apports nets cumulés</h2>
               <p className="muted">
-                Dépôts et retraits externes. Les transferts entre comptes
-                inclus sont ignorés.
+                Apports, retraits et transferts qui entrent ou sortent du
+                périmètre. Les transferts internes sont ignorés.
               </p>
             </div>
           </div>
