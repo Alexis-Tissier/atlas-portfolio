@@ -149,4 +149,7 @@ Ne publiez jamais :
 
 ## Licence
 
-Aucune licence open source n’est encore attribuée. Le code reste soumis au droit d’auteur tant qu’une licence n’a pas été choisie.
+Copyright © 2026 Alexis Tissier. Tous droits réservés.
+
+Le code source et l’application ne peuvent pas être copiés, modifiés,
+redistribués ou commercialisés sans autorisation écrite préalable.
