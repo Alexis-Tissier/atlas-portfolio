@@ -1,0 +1,95 @@
+name: Build Atlas Portfolio
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux x64 - RPM et DEB
+            platform: ubuntu-22.04
+            args: --bundles deb,rpm
+
+          - label: Windows x64 - installateur EXE
+            platform: windows-latest
+            args: --bundles nsis
+
+          - label: macOS Apple Silicon - DMG
+            platform: macos-latest
+            args: --target aarch64-apple-darwin --bundles dmg
+
+          - label: macOS Intel - DMG
+            platform: macos-latest
+            args: --target x86_64-apple-darwin --bundles dmg
+
+    steps:
+      - name: Recuperer le depot
+        uses: actions/checkout@v7
+
+      - name: Installer les dependances Linux
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            xdg-utils
+
+      - name: Installer Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Installer Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ startsWith(matrix.platform, 'macos') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Mettre en cache Rust
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+
+      - name: Installer les dependances JavaScript
+        working-directory: apps/desktop
+        run: npm ci
+
+      - name: Verifier TypeScript
+        working-directory: apps/desktop
+        run: npm run check
+
+      - name: Construire et joindre les installateurs a la release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: "-"
+        with:
+          projectPath: apps/desktop
+          tagName: v__VERSION__-alpha
+          releaseName: Atlas Portfolio v__VERSION__ alpha
+          releaseBody: |
+            Premiere version alpha d'Atlas Portfolio.
+
+            Telechargements :
+            - Fedora / RHEL : fichier `.rpm`
+            - Ubuntu / Debian : fichier `.deb`
+            - Windows : installateur `.exe`
+            - macOS Apple Silicon : DMG `aarch64`
+            - macOS Intel : DMG `x86_64`
+
+            Cette version est une alpha non signee. Windows et macOS peuvent afficher un avertissement de securite.
+          releaseDraft: true
+          prerelease: true
+          args: ${{ matrix.args }}

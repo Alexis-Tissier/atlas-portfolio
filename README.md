@@ -1,5 +1,23 @@
 # Atlas Portfolio
 
+## Télécharger
+
+[![Télécharger Atlas Portfolio](https://img.shields.io/badge/Télécharger-la_dernière_version-1f2937?style=for-the-badge&logo=github)](https://github.com/Alexis-Tissier/atlas-portfolio/releases/latest)
+
+Choisissez le fichier correspondant à votre système :
+
+| Système | Fichier |
+|---|---|
+| Fedora / RHEL | `.rpm` |
+| Ubuntu / Debian | `.deb` |
+| Windows 10/11 | installateur `.exe` |
+| Mac Apple Silicon (M1, M2, M3, M4…) | DMG `aarch64` |
+| Mac Intel | DMG `x86_64` |
+
+> La version alpha n’est pas encore signée officiellement. Windows et macOS
+> peuvent donc afficher un avertissement lors du premier lancement.
+
+
 Atlas Portfolio est une application desktop locale de suivi patrimonial, développée avec Tauri, React, TypeScript et SQLite.
 
 L’objectif est de remplacer progressivement Portfolio Performance par une application plus claire, plus moderne et plus adaptée à un usage personnel quotidien.
