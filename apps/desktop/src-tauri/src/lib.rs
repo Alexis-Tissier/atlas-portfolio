@@ -1747,16 +1747,77 @@ fn get_dashboard_data() -> Result<DashboardData, String> {
         .map(|position| position.value)
         .sum::<f64>();
 
-    let positions_cost = raw_positions
-        .iter()
-        .filter(|position| position.include_in_net_worth)
-        .map(|position| position.cost)
-        .sum::<f64>();
+    let (net_contributions, start_date) = connection
+        .query_row(
+            "
+            SELECT
+              COALESCE(
+                SUM(
+                  CASE
+                    WHEN t.type = 'opening_cash'
+                         AND COALESCE(account_owner.include_in_net_worth, 0) = 1
+                      THEN t.amount
+
+                    WHEN t.type = 'opening_position'
+                         AND COALESCE(account_owner.include_in_net_worth, 0) = 1
+                      THEN COALESCE(t.quantity, 0) * COALESCE(t.price, 0)
+
+                    WHEN t.type = 'deposit'
+                         AND COALESCE(
+                           to_account.include_in_net_worth,
+                           account_owner.include_in_net_worth,
+                           0
+                         ) = 1
+                      THEN t.amount
+
+                    WHEN t.type = 'withdrawal'
+                         AND COALESCE(
+                           from_account.include_in_net_worth,
+                           account_owner.include_in_net_worth,
+                           0
+                         ) = 1
+                      THEN -t.amount
+
+                    WHEN t.type = 'transfer'
+                         AND COALESCE(from_account.include_in_net_worth, 0) = 1
+                         AND COALESCE(to_account.include_in_net_worth, 0) = 0
+                      THEN -t.amount
+
+                    WHEN t.type = 'transfer'
+                         AND COALESCE(from_account.include_in_net_worth, 0) = 0
+                         AND COALESCE(to_account.include_in_net_worth, 0) = 1
+                      THEN t.amount
+
+                    ELSE 0
+                  END
+                ),
+                0.0
+              ) AS net_contributions,
+              COALESCE(MIN(t.date), date('now')) AS start_date
+            FROM transactions t
+            LEFT JOIN accounts account_owner
+              ON account_owner.id = t.account_id
+            LEFT JOIN accounts from_account
+              ON from_account.id = t.from_account_id
+            LEFT JOIN accounts to_account
+              ON to_account.id = t.to_account_id
+            ",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, f64>(0)?,
+                    row.get::<_, String>(1)?,
+                ))
+            },
+        )
+        .map_err(|error| {
+            format!("Erreur calcul des apports nets du portefeuille : {error}")
+        })?;
 
     let total = cash_total + positions_total;
-    let performance_amount = positions_total - positions_cost;
-    let performance_percent = if positions_cost > 0.0 {
-        (performance_amount / positions_cost) * 100.0
+    let performance_amount = total - net_contributions;
+    let performance_percent = if net_contributions.abs() > 0.000001 {
+        (performance_amount / net_contributions) * 100.0
     } else {
         0.0
     };
@@ -1939,7 +2000,7 @@ fn get_dashboard_data() -> Result<DashboardData, String> {
             total,
             performance_amount,
             performance_percent,
-            start_date: "12 janv. 2024".to_string(),
+            start_date,
         },
         positions,
         allocation,
@@ -1947,6 +2008,364 @@ fn get_dashboard_data() -> Result<DashboardData, String> {
         snapshots,
     })
 }
+
+fn scope_contains(selected: &std::collections::HashSet<String>, account_id: Option<&String>) -> bool {
+    account_id
+        .map(|value| selected.contains(value))
+        .unwrap_or(false)
+}
+
+#[tauri::command]
+fn get_scoped_dashboard_data(account_ids: Vec<String>) -> Result<DashboardData, String> {
+    let connection = open_database()?;
+    let all_accounts = read_accounts(&connection)?;
+    let raw_positions = read_raw_positions(&connection)?;
+
+    let known_account_ids = all_accounts
+        .iter()
+        .map(|account| account.id.clone())
+        .collect::<std::collections::HashSet<_>>();
+
+    let selected_account_ids = account_ids
+        .into_iter()
+        .filter(|account_id| known_account_ids.contains(account_id))
+        .collect::<std::collections::HashSet<_>>();
+
+    let cash_total = all_accounts
+        .iter()
+        .filter(|account| selected_account_ids.contains(&account.id))
+        .map(|account| account.cash_balance)
+        .sum::<f64>();
+
+    let positions_total = raw_positions
+        .iter()
+        .filter(|position| selected_account_ids.contains(&position.account_id))
+        .map(|position| position.value)
+        .sum::<f64>();
+
+    let total = cash_total + positions_total;
+
+    let mut net_contributions = 0.0f64;
+    let mut first_transaction_date: Option<String> = None;
+
+    {
+        let mut statement = connection
+            .prepare(
+                "
+                SELECT
+                  date,
+                  type,
+                  account_id,
+                  from_account_id,
+                  to_account_id,
+                  amount,
+                  quantity,
+                  price
+                FROM transactions
+                ORDER BY date ASC, created_at ASC, id ASC
+                ",
+            )
+            .map_err(|error| format!("Erreur SQL périmètre transactions : {error}"))?;
+
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, f64>(5)?,
+                    row.get::<_, Option<f64>>(6)?,
+                    row.get::<_, Option<f64>>(7)?,
+                ))
+            })
+            .map_err(|error| format!("Erreur lecture périmètre transactions : {error}"))?;
+
+        for row in rows {
+            let (
+                date,
+                transaction_type,
+                account_id,
+                from_account_id,
+                to_account_id,
+                amount,
+                quantity,
+                price,
+            ) = row.map_err(|error| format!("Erreur conversion périmètre : {error}"))?;
+
+            let account_selected = scope_contains(&selected_account_ids, account_id.as_ref());
+            let from_selected = scope_contains(&selected_account_ids, from_account_id.as_ref());
+            let to_selected = scope_contains(&selected_account_ids, to_account_id.as_ref());
+
+            if account_selected || from_selected || to_selected {
+                if first_transaction_date.is_none() {
+                    first_transaction_date = Some(date.clone());
+                }
+            }
+
+            match transaction_type.as_str() {
+                "opening_cash" if account_selected => {
+                    net_contributions += amount;
+                }
+                "opening_position" if account_selected => {
+                    net_contributions += quantity.unwrap_or(0.0) * price.unwrap_or(0.0);
+                }
+                "deposit" => {
+                    let target_selected = to_selected || (to_account_id.is_none() && account_selected);
+                    if target_selected {
+                        net_contributions += amount;
+                    }
+                }
+                "withdrawal" => {
+                    let source_selected = from_selected || (from_account_id.is_none() && account_selected);
+                    if source_selected {
+                        net_contributions -= amount;
+                    }
+                }
+                "transfer" => {
+                    if from_selected && !to_selected {
+                        net_contributions -= amount;
+                    } else if !from_selected && to_selected {
+                        net_contributions += amount;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let today = connection
+        .query_row("SELECT date('now')", [], |row| row.get::<_, String>(0))
+        .map_err(|error| format!("Erreur date SQLite : {error}"))?;
+
+    let start_date = first_transaction_date.unwrap_or(today);
+    let performance_amount = total - net_contributions;
+    let performance_percent = if net_contributions.abs() > 0.000001 {
+        (performance_amount / net_contributions) * 100.0
+    } else {
+        0.0
+    };
+
+    let positions = raw_positions
+        .iter()
+        .filter(|position| selected_account_ids.contains(&position.account_id))
+        .map(|position| DashboardPosition {
+            asset: position.asset.clone(),
+            category: position.category.clone(),
+            account: position.account_name.clone(),
+            quantity: position.quantity,
+            value: position.value,
+            weight: if total > 0.0 {
+                (position.value / total) * 100.0
+            } else {
+                0.0
+            },
+            performance_percent: if position.cost > 0.0 {
+                ((position.value - position.cost) / position.cost) * 100.0
+            } else {
+                0.0
+            },
+        })
+        .collect::<Vec<_>>();
+
+    let mut allocation_values = HashMap::from([
+        ("ETF".to_string(), 0.0),
+        ("Actions".to_string(), 0.0),
+        ("Crypto".to_string(), 0.0),
+        ("Cash".to_string(), cash_total),
+    ]);
+
+    for position in &raw_positions {
+        if selected_account_ids.contains(&position.account_id) {
+            *allocation_values
+                .entry(position.category.clone())
+                .or_insert(0.0) += position.value;
+        }
+    }
+
+    let mut allocation = Vec::new();
+
+    {
+        let mut statement = connection
+            .prepare(
+                "
+                SELECT bucket, target_percent
+                FROM allocation_targets
+                ORDER BY
+                  CASE bucket
+                    WHEN 'ETF' THEN 1
+                    WHEN 'Actions' THEN 2
+                    WHEN 'Crypto' THEN 3
+                    WHEN 'Cash' THEN 4
+                    ELSE 99
+                  END
+                ",
+            )
+            .map_err(|error| format!("Erreur SQL objectifs du périmètre : {error}"))?;
+
+        let rows = statement
+            .query_map([], |row| {
+                let bucket: String = row.get(0)?;
+                let target_percent: f64 = row.get(1)?;
+                let value = *allocation_values.get(&bucket).unwrap_or(&0.0);
+                let actual_percent = if total > 0.0 {
+                    (value / total) * 100.0
+                } else {
+                    0.0
+                };
+
+                Ok(DashboardAllocation {
+                    bucket,
+                    target_percent,
+                    value,
+                    actual_percent,
+                    difference_percent: actual_percent - target_percent,
+                })
+            })
+            .map_err(|error| format!("Erreur lecture objectifs du périmètre : {error}"))?;
+
+        for row in rows {
+            allocation.push(
+                row.map_err(|error| format!("Erreur conversion allocation du périmètre : {error}"))?,
+            );
+        }
+    }
+
+    for bucket in [
+        "Fonds",
+        "Obligations",
+        "Monétaire",
+        "Immobilier",
+        "Matières premières",
+        "Autre",
+    ] {
+        let value = *allocation_values.get(bucket).unwrap_or(&0.0);
+
+        if value > 0.000001 && !allocation.iter().any(|row| row.bucket == bucket) {
+            let actual_percent = if total > 0.0 {
+                (value / total) * 100.0
+            } else {
+                0.0
+            };
+
+            allocation.push(DashboardAllocation {
+                bucket: bucket.to_string(),
+                target_percent: 0.0,
+                value,
+                actual_percent,
+                difference_percent: actual_percent,
+            });
+        }
+    }
+
+    let mut positions_by_account = HashMap::<String, f64>::new();
+
+    for position in &raw_positions {
+        if selected_account_ids.contains(&position.account_id) {
+            *positions_by_account
+                .entry(position.account_id.clone())
+                .or_insert(0.0) += position.value;
+        }
+    }
+
+    let accounts = all_accounts
+        .iter()
+        .filter(|account| selected_account_ids.contains(&account.id))
+        .map(|account| {
+            let positions_value = *positions_by_account.get(&account.id).unwrap_or(&0.0);
+            let total_value = account.cash_balance + positions_value;
+
+            DashboardAccount {
+                id: account.id.clone(),
+                name: account.name.clone(),
+                account_type: account.account_type.clone(),
+                currency: account.currency.clone(),
+                cash_balance: account.cash_balance,
+                positions_value,
+                total_value,
+                weight: if total > 0.0 {
+                    (total_value / total) * 100.0
+                } else {
+                    0.0
+                },
+                include_in_net_worth: true,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let mut snapshots_by_date = std::collections::BTreeMap::<String, (f64, f64)>::new();
+
+    {
+        let mut statement = connection
+            .prepare(
+                "
+                SELECT account_id, date, total_value, invested_capital
+                FROM account_snapshots
+                ORDER BY date ASC, account_id ASC
+                ",
+            )
+            .map_err(|error| format!("Erreur SQL snapshots par compte : {error}"))?;
+
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, f64>(2)?,
+                    row.get::<_, f64>(3)?,
+                ))
+            })
+            .map_err(|error| format!("Erreur lecture snapshots par compte : {error}"))?;
+
+        for row in rows {
+            let (account_id, date, total_value, invested_capital) =
+                row.map_err(|error| format!("Erreur conversion snapshot par compte : {error}"))?;
+
+            if !selected_account_ids.contains(&account_id) {
+                continue;
+            }
+
+            let entry = snapshots_by_date.entry(date).or_insert((0.0, 0.0));
+            entry.0 += total_value;
+            entry.1 += invested_capital;
+        }
+    }
+
+    let snapshots = snapshots_by_date
+        .into_iter()
+        .map(|(date, (total_value, invested_capital))| {
+            let performance_amount = total_value - invested_capital;
+            let performance_percent = if invested_capital.abs() > 0.000001 {
+                (performance_amount / invested_capital) * 100.0
+            } else {
+                0.0
+            };
+
+            DashboardSnapshot {
+                date,
+                total_value,
+                invested_capital: Some(invested_capital),
+                performance_amount: Some(performance_amount),
+                performance_percent: Some(performance_percent),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    Ok(DashboardData {
+        summary: DashboardSummary {
+            total,
+            performance_amount,
+            performance_percent,
+            start_date,
+        },
+        positions,
+        allocation,
+        accounts,
+        snapshots,
+    })
+}
+
 
 #[tauri::command]
 fn get_transactions() -> Result<Vec<DbTransaction>, String> {
@@ -4469,6 +4888,7 @@ pub fn run() {
             update_account,
             get_portfolio_overview,
             get_dashboard_data,
+            get_scoped_dashboard_data,
             get_transactions,
             get_securities,
             get_positions_page,

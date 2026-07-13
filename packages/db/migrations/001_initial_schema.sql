@@ -111,6 +111,21 @@ CREATE TABLE IF NOT EXISTS portfolio_snapshots (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS account_snapshots (
+  account_id TEXT NOT NULL,
+  date TEXT NOT NULL,
+  total_value REAL NOT NULL,
+  invested_capital REAL NOT NULL DEFAULT 0,
+  performance_amount REAL NOT NULL DEFAULT 0,
+  performance_percent REAL NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (account_id, date),
+  FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_account_snapshots_date
+  ON account_snapshots(date);
+
 CREATE TABLE IF NOT EXISTS alerts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   date TEXT NOT NULL,

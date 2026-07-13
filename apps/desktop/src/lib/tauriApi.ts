@@ -283,6 +283,10 @@ export async function getDashboardData() {
   return invoke<DashboardData>("get_dashboard_data");
 }
 
+export async function getScopedDashboardData(accountIds: string[]) {
+  return invoke<DashboardData>("get_scoped_dashboard_data", { accountIds });
+}
+
 export async function getTransactions() {
   return invoke<DbTransaction[]>("get_transactions");
 }

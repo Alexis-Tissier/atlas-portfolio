@@ -1034,7 +1034,7 @@ function OverviewPage({
             <strong className={summary.performance_amount >= 0 ? "positive" : "negative"}>
               {displayEuro(summary.performance_amount, isPrivacyMode)} · {formatSignedPercent(summary.performance_percent)}
             </strong>
-            <small> depuis le {summary.start_date}</small>
+            <small> depuis le {formatDate(summary.start_date)}</small>
           </p>
         </div>
 
@@ -1256,7 +1256,7 @@ function DashboardPage({
               <p className="positive">
                 {displayEuro(summary.performance_amount, isPrivacyMode)} ({formatSignedPercent(summary.performance_percent)}) <span>depuis le début</span>
               </p>
-              <p className="muted">Depuis le {summary.start_date}</p>
+              <p className="muted">Depuis le {formatDate(summary.start_date)}</p>
             </div>
 
             <div className="price-refresh-panel">
