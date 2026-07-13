@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/branding/logo-atlas2.png" alt="Logo Atlas Portfolio" width="190">
+</p>
+
 # Atlas Portfolio
 
 ## Télécharger
