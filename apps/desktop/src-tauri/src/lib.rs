@@ -4,9 +4,12 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+const INITIAL_SCHEMA: &str =
+    include_str!("../../../../packages/db/migrations/001_initial_schema.sql");
 
 #[derive(Debug, Serialize, Clone)]
 struct DbAccount {
@@ -341,23 +344,163 @@ struct RawPosition {
     include_in_net_worth: bool,
 }
 
-fn database_path() -> Result<PathBuf, String> {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
+fn legacy_repo_root() -> Option<PathBuf> {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../..")
         .canonicalize()
-        .map_err(|error| format!("Impossible de trouver la racine du projet : {error}"))?;
+        .ok()
+}
 
-    let db_path = repo_root.join(".local").join("atlas-dev.sqlite");
-
-    if !db_path.exists() {
-        return Err(format!(
-            "Base SQLite introuvable : {}. Lance d'abord ./scripts/create-dev-db.sh depuis la racine du projet.",
-            db_path.display()
-        ));
+fn application_data_directory() -> Result<PathBuf, String> {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(base) = env::var_os("APPDATA") {
+            return Ok(PathBuf::from(base).join("Atlas Portfolio"));
+        }
     }
 
-    Ok(db_path)
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(home) = env::var_os("HOME") {
+            return Ok(PathBuf::from(home)
+                .join("Library")
+                .join("Application Support")
+                .join("Atlas Portfolio"));
+        }
+    }
+
+    if let Some(base) = env::var_os("XDG_DATA_HOME") {
+        let base = PathBuf::from(base);
+
+        if !base.as_os_str().is_empty() {
+            return Ok(base.join("atlas-portfolio"));
+        }
+    }
+
+    if let Some(home) = env::var_os("HOME") {
+        return Ok(PathBuf::from(home)
+            .join(".local")
+            .join("share")
+            .join("atlas-portfolio"));
+    }
+
+    Err(
+        "Impossible de déterminer le dossier de données utilisateur pour Atlas Portfolio."
+            .to_string(),
+    )
+}
+
+fn legacy_database_path() -> Option<PathBuf> {
+    legacy_repo_root()
+        .map(|root| root.join(".local").join("atlas-dev.sqlite"))
+        .filter(|path| path.exists())
+}
+
+fn validate_sqlite_database(path: &Path) -> Result<(), String> {
+    let connection = Connection::open(path).map_err(|error| {
+        format!(
+            "Impossible d'ouvrir la base copiée {} : {error}",
+            path.display()
+        )
+    })?;
+
+    let integrity = connection
+        .query_row("PRAGMA integrity_check;", [], |row| row.get::<_, String>(0))
+        .map_err(|error| {
+            format!(
+                "Impossible de vérifier l'intégrité de {} : {error}",
+                path.display()
+            )
+        })?;
+
+    if integrity.trim().eq_ignore_ascii_case("ok") {
+        Ok(())
+    } else {
+        Err(format!(
+            "La vérification SQLite de {} a échoué : {integrity}",
+            path.display()
+        ))
+    }
+}
+
+fn initialize_database(path: &Path) -> Result<(), String> {
+    let connection = Connection::open(path).map_err(|error| {
+        format!(
+            "Impossible de créer la base SQLite {} : {error}",
+            path.display()
+        )
+    })?;
+
+    connection
+        .execute_batch(INITIAL_SCHEMA)
+        .map_err(|error| format!("Impossible d'initialiser la base Atlas : {error}"))?;
+
+    connection
+        .execute_batch("PRAGMA user_version = 1;")
+        .map_err(|error| format!("Impossible de versionner la base Atlas : {error}"))?;
+
+    Ok(())
+}
+
+fn migrate_legacy_database(legacy: &Path, target: &Path) -> Result<(), String> {
+    if let Ok(connection) = Connection::open(legacy) {
+        let _ = connection.execute_batch("PRAGMA wal_checkpoint(FULL);");
+    }
+
+    let temporary = target.with_extension("sqlite.migrating");
+
+    if temporary.exists() {
+        fs::remove_file(&temporary).map_err(|error| {
+            format!(
+                "Impossible de nettoyer la migration précédente {} : {error}",
+                temporary.display()
+            )
+        })?;
+    }
+
+    fs::copy(legacy, &temporary).map_err(|error| {
+        format!(
+            "Impossible de copier l'ancienne base {} vers {} : {error}",
+            legacy.display(),
+            temporary.display()
+        )
+    })?;
+
+    validate_sqlite_database(&temporary)?;
+
+    fs::rename(&temporary, target).map_err(|error| {
+        format!(
+            "Impossible de finaliser la migration vers {} : {error}",
+            target.display()
+        )
+    })?;
+
+    Ok(())
+}
+
+fn database_path() -> Result<PathBuf, String> {
+    let data_directory = application_data_directory()?;
+
+    fs::create_dir_all(&data_directory).map_err(|error| {
+        format!(
+            "Impossible de créer le dossier de données {} : {error}",
+            data_directory.display()
+        )
+    })?;
+
+    let database = data_directory.join("atlas.sqlite");
+
+    if database.exists() {
+        return Ok(database);
+    }
+
+    if let Some(legacy) = legacy_database_path() {
+        migrate_legacy_database(&legacy, &database)?;
+    } else {
+        initialize_database(&database)?;
+    }
+
+    Ok(database)
 }
 
 fn ensure_flexible_account_types(connection: &Connection) -> Result<(), String> {
@@ -571,15 +714,26 @@ fn ensure_flexible_security_types(connection: &Connection) -> Result<(), String>
 
 fn open_database() -> Result<Connection, String> {
     let path = database_path()?;
-    let connection =
-        Connection::open(path).map_err(|error| format!("Impossible d'ouvrir SQLite : {error}"))?;
+    let connection = Connection::open(&path)
+        .map_err(|error| format!("Impossible d'ouvrir SQLite {} : {error}", path.display()))?;
+
+    connection
+        .execute_batch(INITIAL_SCHEMA)
+        .map_err(|error| format!("Impossible de mettre à jour le schéma Atlas : {error}"))?;
 
     ensure_flexible_account_types(&connection)?;
     ensure_flexible_security_types(&connection)?;
 
     connection
-        .execute_batch("PRAGMA foreign_keys = ON;")
-        .map_err(|error| format!("Impossible d'activer les clés étrangères SQLite : {error}"))?;
+        .execute_batch(
+            "
+            PRAGMA foreign_keys = ON;
+            PRAGMA journal_mode = WAL;
+            PRAGMA synchronous = NORMAL;
+            PRAGMA busy_timeout = 5000;
+            ",
+        )
+        .map_err(|error| format!("Impossible de configurer SQLite : {error}"))?;
 
     Ok(connection)
 }
@@ -592,12 +746,31 @@ fn alpha_vantage_api_key() -> Result<String, String> {
         }
     }
 
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .join("../../..")
-        .canonicalize()
-        .map_err(|error| format!("Impossible de trouver la racine du projet : {error}"))?;
-    let config_path = repo_root.join(".local").join("atlas-config.json");
+    let config_directory = application_data_directory()?;
+
+    fs::create_dir_all(&config_directory).map_err(|error| {
+        format!(
+            "Impossible de créer le dossier de configuration {} : {error}",
+            config_directory.display()
+        )
+    })?;
+
+    let config_path = config_directory.join("atlas-config.json");
+
+    if !config_path.exists() {
+        if let Some(repo_root) = legacy_repo_root() {
+            let legacy_config = repo_root.join(".local").join("atlas-config.json");
+
+            if legacy_config.exists() {
+                fs::copy(&legacy_config, &config_path).map_err(|error| {
+                    format!(
+                        "Impossible de migrer la configuration {} : {error}",
+                        legacy_config.display()
+                    )
+                })?;
+            }
+        }
+    }
 
     if config_path.exists() {
         let content = std::fs::read_to_string(&config_path)
@@ -618,10 +791,10 @@ fn alpha_vantage_api_key() -> Result<String, String> {
         }
     }
 
-    Err(
-        "Clé Alpha Vantage manquante. Mets-la dans .local/atlas-config.json avec { \"alpha_vantage_api_key\": \"ta_cle\" } ou lance export ATLAS_ALPHA_VANTAGE_API_KEY=\"ta_cle\"."
-            .to_string(),
-    )
+    Err(format!(
+        "Clé Alpha Vantage manquante. Mets-la dans {} avec {{ \"alpha_vantage_api_key\": \"ta_cle\" }} ou définis ATLAS_ALPHA_VANTAGE_API_KEY.",
+        config_path.display()
+    ))
 }
 
 fn alpha_vantage_request(parameters: &[(&str, String)]) -> Result<Value, String> {
