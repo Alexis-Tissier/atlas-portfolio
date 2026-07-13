@@ -7132,3 +7132,17 @@ td:first-child { color: #374151; font-weight: 600; }
 .performance-engine-page .performance-price-formula {
   display: none !important;
 }
+
+
+/* Cached application pages */
+.page-cache {
+  min-height: calc(100vh - 58px);
+}
+
+.cached-page {
+  min-height: calc(100vh - 58px);
+}
+
+.cached-page[hidden] {
+  display: none !important;
+}

@@ -1,4 +1,4 @@
-import { Fragment, FormEvent, useEffect, useState, useRef } from "react";
+import { Fragment, FormEvent, memo, useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 import { monthlyContribution } from "./mocks/mockPortfolio";
@@ -198,6 +198,9 @@ type RecommendationPlan = {
 
 function App() {
   const [currentPage, setCurrentPage] = useState("Portefeuille");
+  const [visitedPages, setVisitedPages] = useState<Set<string>>(
+    () => new Set(["Portefeuille"]),
+  );
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [managedAccounts, setManagedAccounts] = useState<DbAccount[]>([]);
   const [transactions, setTransactions] = useState<DbTransaction[]>([]);
@@ -220,6 +223,19 @@ function App() {
   const [isTopbarSearching, setIsTopbarSearching] = useState(false);
   const [portfolioSettings, setPortfolioSettings] = useState(() => readPortfolioSettings());
   const topbarSearchRef = useRef<HTMLFormElement | null>(null);
+
+  useEffect(() => {
+    setVisitedPages((current) => {
+      if (current.has(currentPage)) {
+        return current;
+      }
+
+      const next = new Set(current);
+      next.add(currentPage);
+      return next;
+    });
+  }, [currentPage]);
+
   useEffect(() => {
     function closeTopbarMarketPanel() {
       setTopbarSearchResults([]);
@@ -310,51 +326,60 @@ function App() {
     }
   }
 
-  async function refreshData() {
-    try {
-      const data = await getDashboardData();
-      setDashboardData(data);
+  const refreshData = useCallback(async () => {
+    const [
+      dashboardResult,
+      accountsResult,
+      transactionsResult,
+      securitiesResult,
+      positionsResult,
+    ] = await Promise.allSettled([
+      getDashboardData(),
+      getAccounts(),
+      getTransactions(),
+      getSecurities(),
+      getPositionsPage(),
+    ]);
+
+    if (dashboardResult.status === "fulfilled") {
+      setDashboardData(dashboardResult.value);
       setDatabaseError(null);
-    } catch (error) {
-      console.error(error);
-      setDatabaseError(String(error));
+    } else {
+      console.error(dashboardResult.reason);
+      setDatabaseError(String(dashboardResult.reason));
     }
 
-    try {
-      const data = await getAccounts();
-      setManagedAccounts(data);
-    } catch (error) {
-      console.error(error);
+    if (accountsResult.status === "fulfilled") {
+      setManagedAccounts(accountsResult.value);
+    } else {
+      console.error(accountsResult.reason);
     }
 
-    try {
-      const data = await getTransactions();
-      setTransactions(data);
+    if (transactionsResult.status === "fulfilled") {
+      setTransactions(transactionsResult.value);
       setTransactionsError(null);
-    } catch (error) {
-      console.error(error);
-      setTransactionsError(String(error));
+    } else {
+      console.error(transactionsResult.reason);
+      setTransactionsError(String(transactionsResult.reason));
     }
 
-    try {
-      const data = await getSecurities();
-      setSecurities(data);
-    } catch (error) {
-      console.error(error);
+    if (securitiesResult.status === "fulfilled") {
+      setSecurities(securitiesResult.value);
+    } else {
+      console.error(securitiesResult.reason);
     }
 
-    try {
-      const data = await getPositionsPage();
-      setPositionsPageRows(data);
+    if (positionsResult.status === "fulfilled") {
+      setPositionsPageRows(positionsResult.value);
       setPositionsError(null);
-    } catch (error) {
-      console.error(error);
-      setPositionsError(String(error));
+    } else {
+      console.error(positionsResult.reason);
+      setPositionsError(String(positionsResult.reason));
     }
-  }
+  
+  }, []);
 
-
-  async function refreshOpenPositionPrices(silent = false) {
+  const refreshOpenPositionPrices = useCallback(async (silent = false) => {
     setIsUpdatingPrices(true);
 
     try {
@@ -370,29 +395,33 @@ function App() {
     } finally {
       setIsUpdatingPrices(false);
     }
-  }
+  
+  }, [refreshData]);
+
+  const handleManualPriceRefresh = useCallback(() => {
+    void refreshOpenPositionPrices(false);
+  }, [refreshOpenPositionPrices]);
 
   useEffect(() => {
     let cancelled = false;
 
-    async function bootstrap() {
-      await refreshData();
+    void refreshData();
 
+    const startupPriceTimer = window.setTimeout(() => {
       if (!cancelled) {
-        await refreshOpenPositionPrices(true);
+        void refreshOpenPositionPrices(true);
       }
-    }
-
-    bootstrap();
+    }, 10_000);
 
     const intervalId = window.setInterval(() => {
       if (!cancelled) {
-        refreshOpenPositionPrices(true);
+        void refreshOpenPositionPrices(true);
       }
     }, 30 * 60 * 1000);
 
     return () => {
       cancelled = true;
+      window.clearTimeout(startupPriceTimer);
       window.clearInterval(intervalId);
     };
   }, []);
@@ -405,44 +434,70 @@ function App() {
     savePortfolioSettings(portfolioSettings);
   }, [portfolioSettings]);
 
-  const mockSummary = getPortfolioSummary();
-  const mockPositionRows = getPositionRows();
-  const mockAllocationRows = getAllocationRows();
+  const mockSummary = useMemo(() => getPortfolioSummary(), []);
+  const mockPositionRows = useMemo(() => getPositionRows(), []);
+  const mockAllocationRows = useMemo(() => getAllocationRows(), []);
 
-  const summary = dashboardData?.summary ?? {
-    total: mockSummary.total,
-    performance_amount: mockSummary.performanceAmount,
-    performance_percent: mockSummary.performancePercent,
-    start_date: mockSummary.startDate,
-  };
+  const summary = useMemo(
+    () =>
+      dashboardData?.summary ?? {
+        total: mockSummary.total,
+        performance_amount: mockSummary.performanceAmount,
+        performance_percent: mockSummary.performancePercent,
+        start_date: mockSummary.startDate,
+      },
+    [dashboardData, mockSummary],
+  );
 
-  const positionRows = dashboardData
-    ? dashboardData.positions.map((position) => ({
-        asset: position.asset,
-        category: position.category,
-        account: position.account,
-        quantity: formatQuantity(position.quantity),
-        value: displayEuro(position.value, isPrivacyMode),
-        weight: formatUnsignedPercent(position.weight),
-        performance: formatSignedPercent(position.performance_percent),
-      }))
-    : mockPositionRows;
+  const positionRows = useMemo(
+    () =>
+      dashboardData
+        ? dashboardData.positions.map((position) => ({
+            asset: position.asset,
+            category: position.category,
+            account: position.account,
+            quantity: formatQuantity(position.quantity),
+            value: displayEuro(position.value, isPrivacyMode),
+            weight: formatUnsignedPercent(position.weight),
+            performance: formatSignedPercent(position.performance_percent),
+          }))
+        : mockPositionRows,
+    [dashboardData, isPrivacyMode, mockPositionRows],
+  );
 
-  const allocationRows = dashboardData
-    ? dashboardData.allocation.map((row) => ({
-        bucket: row.bucket,
-        targetPercent: row.target_percent,
-        actualPercent: row.actual_percent,
-        differencePercent: row.difference_percent,
-        value: row.value,
-      }))
-    : mockAllocationRows;
+  const allocationRows = useMemo(
+    () =>
+      dashboardData
+        ? dashboardData.allocation.map((row) => ({
+            bucket: row.bucket,
+            targetPercent: row.target_percent,
+            actualPercent: row.actual_percent,
+            differencePercent: row.difference_percent,
+            value: row.value,
+          }))
+        : mockAllocationRows,
+    [dashboardData, mockAllocationRows],
+  );
 
-  const allocationRowsWithSettings = applyPortfolioSettingsToAllocationRows(allocationRows, portfolioSettings);
+  const allocationRowsWithSettings = useMemo(
+    () =>
+      applyPortfolioSettingsToAllocationRows(
+        allocationRows,
+        portfolioSettings,
+      ),
+    [allocationRows, portfolioSettings],
+  );
 
-  const accounts = dashboardData?.accounts ?? [];
-  const chartSnapshots = dashboardData?.snapshots ?? [];
-  const topbarPrimaryResult = topbarSelectedAsset ?? topbarSearchResults[0] ?? null;
+  const accounts = useMemo(
+    () => dashboardData?.accounts ?? [],
+    [dashboardData],
+  );
+  const chartSnapshots = useMemo(
+    () => dashboardData?.snapshots ?? [],
+    [dashboardData],
+  );
+  const topbarPrimaryResult =
+    topbarSelectedAsset ?? topbarSearchResults[0] ?? null;
   return (
     <div className={isDarkMode ? "app-shell dark" : "app-shell"}>
       <aside className="sidebar">
@@ -559,101 +614,149 @@ function App() {
           </div>
         </header>
 
-        {currentPage === "Aperçu" ? (
-          <OverviewPage
-            accounts={accounts}
-            allocationRows={allocationRowsWithSettings}
-            isPrivacyMode={isPrivacyMode}
-            onNavigate={setCurrentPage}
-            positions={positionsPageRows}
-            snapshots={chartSnapshots}
-            summary={summary}
-            transactions={transactions}
-          />
-        ) : currentPage === "Répartition" ? (
-          <AllocationPage
-            accounts={accounts}
-            allocationRows={allocationRowsWithSettings}
-            isPrivacyMode={isPrivacyMode}
-            positions={positionsPageRows}
-            summary={summary}
-          />        ) : currentPage === "Performance" ? (
-          <PerformancePage
-            accounts={accounts}
-            isPrivacyMode={isPrivacyMode}
-            positions={positionsPageRows}
-            snapshots={chartSnapshots}
-            summary={summary}
-            transactions={transactions}
-          />
-        ) : currentPage === "Positions" ? (
-          <PositionsPage positions={positionsPageRows} positionsError={positionsError} priceUpdateSummary={priceUpdateSummary} isPrivacyMode={isPrivacyMode} />
-        ) : currentPage === "Transactions" ? (
-          <TransactionsPage
-            accounts={accounts}
-            isPrivacyMode={isPrivacyMode}
-            onTransactionCreated={refreshData}
-            positions={positionsPageRows}
-            securities={securities}
-            transactions={transactions}
-            transactionsError={transactionsError}
-          />
-        ) : currentPage === "Prévisionnel" ? (
-          <ForecastPage
-            isPrivacyMode={isPrivacyMode}
-            settings={portfolioSettings}
-            summary={summary}
-          />
-        ) : currentPage === "Recommandations" ? (
-          <RecommendationsPage
-            accounts={accounts}
-            allocationRows={allocationRowsWithSettings}
-            isPrivacyMode={isPrivacyMode}
-            positions={positionsPageRows}
-            summary={summary}
-          />
-        ) : currentPage === "Journal" ? (
-          <PortfolioAuditPage
-            accounts={accounts}
-            isPrivacyMode={isPrivacyMode}
-            onRefresh={refreshData}
-            positions={positionsPageRows}
-            transactions={transactions}
-          />
-        ) : currentPage === "Importer / Exporter" ? (
-          <ImportExportPage
-            accounts={accounts}
-            onImported={refreshData}
-            positions={positionsPageRows}
-            securities={securities}
-            transactions={transactions}
-          />
-        ) : currentPage === "Portefeuille" ? (
-          <DashboardPage
-            accounts={accounts}
-            allocationRows={allocationRowsWithSettings}
-            databaseError={databaseError}
-            dashboardData={dashboardData}
-            isPrivacyMode={isPrivacyMode}
-            managedAccounts={managedAccounts}
-            onAccountsChanged={refreshData}
-            positionRows={positionRows}
-            summary={summary}
-            snapshots={chartSnapshots}
-            isUpdatingPrices={isUpdatingPrices}
-            onPriceRefresh={() => refreshOpenPositionPrices(false)}
-            onNavigate={setCurrentPage}
-            priceUpdateError={priceUpdateError}
-            priceUpdateSummary={priceUpdateSummary}
-          />
-        ) : currentPage === "Paramètres" ? (
-          <SettingsPage
-            settings={portfolioSettings}
-            onSettingsChange={setPortfolioSettings}
-          />
-        ) : (
-          <PlaceholderPage title={currentPage} />
-        )}
+        <div className="page-cache">
+          {(visitedPages.has("Portefeuille") || currentPage === "Portefeuille") ? (
+            <div className="cached-page" hidden={currentPage !== "Portefeuille"}>
+              <MemoDashboardPage
+                accounts={accounts}
+                allocationRows={allocationRowsWithSettings}
+                databaseError={databaseError}
+                dashboardData={dashboardData}
+                isPrivacyMode={isPrivacyMode}
+                managedAccounts={managedAccounts}
+                onAccountsChanged={refreshData}
+                positionRows={positionRows}
+                summary={summary}
+                snapshots={chartSnapshots}
+                isUpdatingPrices={isUpdatingPrices}
+                onPriceRefresh={handleManualPriceRefresh}
+                onNavigate={setCurrentPage}
+                priceUpdateError={priceUpdateError}
+                priceUpdateSummary={priceUpdateSummary}
+              />
+            </div>
+          ) : null}
+
+          {(visitedPages.has("Aperçu") || currentPage === "Aperçu") ? (
+            <div className="cached-page" hidden={currentPage !== "Aperçu"}>
+              <MemoOverviewPage
+                accounts={accounts}
+                allocationRows={allocationRowsWithSettings}
+                isPrivacyMode={isPrivacyMode}
+                onNavigate={setCurrentPage}
+                positions={positionsPageRows}
+                snapshots={chartSnapshots}
+                summary={summary}
+                transactions={transactions}
+              />
+            </div>
+          ) : null}
+
+          {(visitedPages.has("Positions") || currentPage === "Positions") ? (
+            <div className="cached-page" hidden={currentPage !== "Positions"}>
+              <MemoPositionsPage
+                positions={positionsPageRows}
+                positionsError={positionsError}
+                priceUpdateSummary={priceUpdateSummary}
+                isPrivacyMode={isPrivacyMode}
+              />
+            </div>
+          ) : null}
+
+          {(visitedPages.has("Transactions") || currentPage === "Transactions") ? (
+            <div className="cached-page" hidden={currentPage !== "Transactions"}>
+              <MemoTransactionsPage
+                accounts={accounts}
+                isPrivacyMode={isPrivacyMode}
+                onTransactionCreated={refreshData}
+                positions={positionsPageRows}
+                securities={securities}
+                transactions={transactions}
+                transactionsError={transactionsError}
+              />
+            </div>
+          ) : null}
+
+          {(visitedPages.has("Répartition") || currentPage === "Répartition") ? (
+            <div className="cached-page" hidden={currentPage !== "Répartition"}>
+              <MemoAllocationPage
+                accounts={accounts}
+                allocationRows={allocationRowsWithSettings}
+                isPrivacyMode={isPrivacyMode}
+                positions={positionsPageRows}
+                summary={summary}
+              />
+            </div>
+          ) : null}
+
+          {(visitedPages.has("Performance") || currentPage === "Performance") ? (
+            <div className="cached-page" hidden={currentPage !== "Performance"}>
+              <MemoPerformancePage
+                accounts={accounts}
+                isPrivacyMode={isPrivacyMode}
+                positions={positionsPageRows}
+                snapshots={chartSnapshots}
+                summary={summary}
+                transactions={transactions}
+              />
+            </div>
+          ) : null}
+
+          {(visitedPages.has("Recommandations") || currentPage === "Recommandations") ? (
+            <div className="cached-page" hidden={currentPage !== "Recommandations"}>
+              <MemoRecommendationsPage
+                accounts={accounts}
+                allocationRows={allocationRowsWithSettings}
+                isPrivacyMode={isPrivacyMode}
+                positions={positionsPageRows}
+                summary={summary}
+              />
+            </div>
+          ) : null}
+
+          {(visitedPages.has("Prévisionnel") || currentPage === "Prévisionnel") ? (
+            <div className="cached-page" hidden={currentPage !== "Prévisionnel"}>
+              <MemoForecastPage
+                isPrivacyMode={isPrivacyMode}
+                settings={portfolioSettings}
+                summary={summary}
+              />
+            </div>
+          ) : null}
+
+          {(visitedPages.has("Journal") || currentPage === "Journal") ? (
+            <div className="cached-page" hidden={currentPage !== "Journal"}>
+              <MemoPortfolioAuditPage
+                accounts={accounts}
+                isPrivacyMode={isPrivacyMode}
+                onRefresh={refreshData}
+                positions={positionsPageRows}
+                transactions={transactions}
+              />
+            </div>
+          ) : null}
+
+          {(visitedPages.has("Importer / Exporter") || currentPage === "Importer / Exporter") ? (
+            <div className="cached-page" hidden={currentPage !== "Importer / Exporter"}>
+              <MemoImportExportPage
+                accounts={accounts}
+                onImported={refreshData}
+                positions={positionsPageRows}
+                securities={securities}
+                transactions={transactions}
+              />
+            </div>
+          ) : null}
+
+          {(visitedPages.has("Paramètres") || currentPage === "Paramètres") ? (
+            <div className="cached-page" hidden={currentPage !== "Paramètres"}>
+              <MemoSettingsPage
+                settings={portfolioSettings}
+                onSettingsChange={setPortfolioSettings}
+              />
+            </div>
+          ) : null}
+        </div>
       </main>
     </div>
   );
@@ -664,6 +767,19 @@ function App() {
 
 
 
+
+
+const MemoDashboardPage = memo(DashboardPage);
+const MemoOverviewPage = memo(OverviewPage);
+const MemoPositionsPage = memo(PositionsPage);
+const MemoTransactionsPage = memo(TransactionsPage);
+const MemoAllocationPage = memo(AllocationPage);
+const MemoPerformancePage = memo(PerformancePage);
+const MemoRecommendationsPage = memo(RecommendationsPage);
+const MemoForecastPage = memo(ForecastPage);
+const MemoPortfolioAuditPage = memo(PortfolioAuditPage);
+const MemoImportExportPage = memo(ImportExportPage);
+const MemoSettingsPage = memo(SettingsPage);
 
 
 function TopbarMarketChart({
@@ -7320,22 +7436,6 @@ function SettingsPage({
           </div>
         </article>
       </form>
-    </section>
-  );
-}
-
-function PlaceholderPage({ title }: { title: string }) {
-  return (
-    <section className="page">
-      <div className="title-block">
-        <h1>{title}</h1>
-        <p>Cette page sera construite après le dashboard et les transactions.</p>
-      </div>
-
-      <article className="card placeholder-card">
-        <h2>Page prévue</h2>
-        <p>On garde la navigation prête, mais on développe les pages par ordre de priorité.</p>
-      </article>
     </section>
   );
 }
