@@ -51,3 +51,5 @@ scripts/repair-dev-current-prices.sh
 
 # Local Atlas runtime config
 .local/
+*.bak
+*.bak_*
