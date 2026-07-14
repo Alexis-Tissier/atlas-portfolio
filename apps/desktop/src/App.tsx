@@ -2042,287 +2042,110 @@ function parsePerformanceDate(value: string) {
   return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
-function externalCashFlowAmount(
-  transaction: DbTransaction,
-  selectedAccountIds: Set<string>,
-) {
-  const amount = Number(transaction.amount ?? 0);
-  const accountId = transaction.account_id;
-  const fromAccountId = transaction.from_account_id;
-  const toAccountId = transaction.to_account_id;
-
-  const accountSelected = Boolean(
-    accountId && selectedAccountIds.has(accountId),
-  );
-  const fromSelected = Boolean(
-    fromAccountId && selectedAccountIds.has(fromAccountId),
-  );
-  const toSelected = Boolean(
-    toAccountId && selectedAccountIds.has(toAccountId),
-  );
-
-  if (transaction.transaction_type === "opening_cash") {
-    return accountSelected ? amount : 0;
-  }
-
-  if (transaction.transaction_type === "opening_position") {
-    if (!accountSelected) return 0;
-
-    return (
-      Number(transaction.quantity ?? 0)
-      * Number(transaction.price ?? 0)
-    );
-  }
-
-  if (transaction.transaction_type === "deposit") {
-    const targetSelected =
-      toSelected || (!toAccountId && accountSelected);
-
-    return targetSelected ? amount : 0;
-  }
-
-  if (transaction.transaction_type === "withdrawal") {
-    const sourceSelected =
-      fromSelected || (!fromAccountId && accountSelected);
-
-    return sourceSelected ? -amount : 0;
-  }
-
-  if (transaction.transaction_type === "transfer") {
-    if (fromSelected && !toSelected) return -amount;
-    if (!fromSelected && toSelected) return amount;
-  }
-
-  return 0;
-}
-
-function snapshotInvestedCapital(
-  snapshot: DashboardData["snapshots"][number],
-) {
-  const value = snapshot.invested_capital;
-
-  return typeof value === "number" && Number.isFinite(value)
-    ? value
-    : null;
-}
-
 function buildPerformanceAnalytics(
-  accounts: DashboardData["accounts"],
-  currentTotal: number,
+  summary: {
+    total: number;
+    performance_amount: number;
+    performance_percent: number;
+    start_date: string;
+  },
   snapshots: DashboardData["snapshots"],
-  transactions: DbTransaction[],
 ): PerformanceAnalytics {
-  const selectedAccountIds = new Set(
-    accounts.map((account) => account.id),
+  const performanceByDate = new Map<string, number>();
+  const investedCapitalByDate = new Map<string, number>();
+
+  for (const snapshot of snapshots) {
+    if (parsePerformanceDate(snapshot.date) <= 0) {
+      continue;
+    }
+
+    const totalValue = Number(snapshot.total_value);
+    const investedCapital = Number(snapshot.invested_capital);
+    const storedPerformancePercent = Number(
+      snapshot.performance_percent,
+    );
+
+    if (
+      Number.isFinite(storedPerformancePercent)
+      && snapshot.performance_percent !== null
+      && snapshot.performance_percent !== undefined
+    ) {
+      performanceByDate.set(
+        snapshot.date,
+        storedPerformancePercent,
+      );
+    } else if (
+      Number.isFinite(totalValue)
+      && Number.isFinite(investedCapital)
+      && Math.abs(investedCapital) > 0.000001
+    ) {
+      performanceByDate.set(
+        snapshot.date,
+        ((totalValue - investedCapital) / investedCapital) * 100,
+      );
+    }
+
+    if (
+      Number.isFinite(investedCapital)
+      && snapshot.invested_capital !== null
+      && snapshot.invested_capital !== undefined
+    ) {
+      investedCapitalByDate.set(
+        snapshot.date,
+        investedCapital,
+      );
+    }
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  performanceByDate.set(
+    today,
+    Number.isFinite(summary.performance_percent)
+      ? summary.performance_percent
+      : 0,
   );
 
-  const externalFlows = transactions
-    .map((transaction) => ({
-      date: transaction.date,
-      value: externalCashFlowAmount(
-        transaction,
-        selectedAccountIds,
-      ),
+  const currentInvestedCapital =
+    summary.total - summary.performance_amount;
+
+  if (Number.isFinite(currentInvestedCapital)) {
+    investedCapitalByDate.set(today, currentInvestedCapital);
+  }
+
+  const twrSeries = [...performanceByDate.entries()]
+    .map(([pointDate, value]) => ({
+      date: pointDate,
+      value,
     }))
-    .filter(
-      (flow) =>
-        parsePerformanceDate(flow.date) > 0
-        && Number.isFinite(flow.value)
-        && Math.abs(flow.value) > 0.000001,
-    )
     .sort(
       (left, right) =>
         parsePerformanceDate(left.date)
         - parsePerformanceDate(right.date),
     );
 
-  const snapshotsByDate = new Map<
-    string,
-    {
-      date: string;
-      value: number;
-      investedCapital: number | null;
-    }
-  >();
-
-  for (const snapshot of snapshots) {
-    if (
-      parsePerformanceDate(snapshot.date) <= 0
-      || !Number.isFinite(snapshot.total_value)
-    ) {
-      continue;
-    }
-
-    snapshotsByDate.set(snapshot.date, {
-      date: snapshot.date,
-      value: snapshot.total_value,
-      investedCapital: snapshotInvestedCapital(snapshot),
-    });
-  }
-
-  let sortedSnapshots = [...snapshotsByDate.values()].sort(
-    (left, right) =>
-      parsePerformanceDate(left.date)
-      - parsePerformanceDate(right.date),
-  );
-
-  const today = new Date().toISOString().slice(0, 10);
-  const lastStoredSnapshot =
-    sortedSnapshots[sortedSnapshots.length - 1] ?? null;
-
-  let currentInvestedCapital =
-    snapshotsByDate.get(today)?.investedCapital
-    ?? lastStoredSnapshot?.investedCapital
-    ?? null;
-
-  if (
-    currentInvestedCapital !== null
-    && lastStoredSnapshot
-    && lastStoredSnapshot.date < today
-  ) {
-    const lastTimestamp =
-      parsePerformanceDate(lastStoredSnapshot.date);
-    const todayTimestamp = parsePerformanceDate(today);
-
-    currentInvestedCapital += externalFlows
-      .filter((flow) => {
-        const timestamp = parsePerformanceDate(flow.date);
-
-        return (
-          timestamp > lastTimestamp
-          && timestamp <= todayTimestamp
-        );
-      })
-      .reduce((sum, flow) => sum + flow.value, 0);
-  }
-
-  snapshotsByDate.set(today, {
-    date: today,
-    value: currentTotal,
-    investedCapital: currentInvestedCapital,
-  });
-
-  sortedSnapshots = [...snapshotsByDate.values()].sort(
-    (left, right) =>
-      parsePerformanceDate(left.date)
-      - parsePerformanceDate(right.date),
-  );
-
-  const twrSeries: PerformanceSeriesPoint[] =
-    sortedSnapshots.length > 0
-      ? [{ date: sortedSnapshots[0].date, value: 0 }]
-      : [];
-
-  let cumulativeReturn = 1;
-
-  for (
-    let index = 1;
-    index < sortedSnapshots.length;
-    index += 1
-  ) {
-    const previous = sortedSnapshots[index - 1];
-    const current = sortedSnapshots[index];
-
-    const previousTimestamp =
-      parsePerformanceDate(previous.date);
-    const currentTimestamp =
-      parsePerformanceDate(current.date);
-    const periodDuration = Math.max(
-      currentTimestamp - previousTimestamp,
-      24 * 60 * 60 * 1000,
+  const sortedCapitalPoints = [...investedCapitalByDate.entries()]
+    .map(([pointDate, value]) => ({
+      date: pointDate,
+      value,
+    }))
+    .sort(
+      (left, right) =>
+        parsePerformanceDate(left.date)
+        - parsePerformanceDate(right.date),
     );
-
-    const periodFlows = externalFlows.filter((flow) => {
-      const timestamp = parsePerformanceDate(flow.date);
-
-      return (
-        timestamp > previousTimestamp
-        && timestamp <= currentTimestamp
-      );
-    });
-
-    const transactionNetFlow = periodFlows.reduce(
-      (sum, flow) => sum + flow.value,
-      0,
-    );
-
-    const capitalNetFlow =
-      previous.investedCapital !== null
-      && current.investedCapital !== null
-        ? current.investedCapital
-          - previous.investedCapital
-        : transactionNetFlow;
-
-    const reconciliationTolerance = Math.max(
-      0.05,
-      Math.abs(capitalNetFlow) * 0.005,
-    );
-
-    const transactionsReconcile =
-      Math.abs(transactionNetFlow - capitalNetFlow)
-      <= reconciliationTolerance;
-
-    const weightedFlow = transactionsReconcile
-      ? periodFlows.reduce((sum, flow) => {
-          const timestamp = parsePerformanceDate(flow.date);
-          const remainingWeight = Math.min(
-            Math.max(
-              (currentTimestamp - timestamp) / periodDuration,
-              0,
-            ),
-            1,
-          );
-
-          return sum + flow.value * remainingWeight;
-        }, 0)
-      : capitalNetFlow * 0.5;
-
-    const denominator = previous.value + weightedFlow;
-
-    if (denominator > 0.000001) {
-      const periodReturn =
-        (
-          current.value
-          - previous.value
-          - capitalNetFlow
-        ) / denominator;
-
-      if (
-        Number.isFinite(periodReturn)
-        && periodReturn > -1
-      ) {
-        cumulativeReturn *= 1 + periodReturn;
-      }
-    }
-
-    twrSeries.push({
-      date: current.date,
-      value: (cumulativeReturn - 1) * 100,
-    });
-  }
-
-  const capitalPoints = sortedSnapshots.filter(
-    (
-      snapshot,
-    ): snapshot is typeof snapshot & {
-      investedCapital: number;
-    } => snapshot.investedCapital !== null,
-  );
 
   const initialInvestedCapital =
-    capitalPoints[0]?.investedCapital ?? 0;
+    sortedCapitalPoints[0]?.value ?? 0;
 
-  const externalFlowSeries: PerformanceSeriesPoint[] =
-    capitalPoints.map((snapshot) => ({
-      date: snapshot.date,
-      value:
-        snapshot.investedCapital
-        - initialInvestedCapital,
-    }));
+  const externalFlowSeries = sortedCapitalPoints.map((point) => ({
+    date: point.date,
+    value: point.value - initialInvestedCapital,
+  }));
 
   return {
-    twrPercent:
-      twrSeries[twrSeries.length - 1]?.value ?? 0,
+    twrPercent: Number.isFinite(summary.performance_percent)
+      ? summary.performance_percent
+      : 0,
     twrSeries,
     externalFlowSeries,
   };
@@ -4066,10 +3889,8 @@ function PerformancePage({
     summary.total,
   );
   const performanceAnalytics = buildPerformanceAnalytics(
-    accounts,
-    summary.total,
+    summary,
     snapshots,
-    transactions,
   );
   const classPerformanceRows = buildPerformanceBreakdown(
     ledger.positionRows,
@@ -4225,10 +4046,10 @@ function PerformancePage({
         <article className="card performance-card performance-twr-card">
           <div className="card-header">
             <div>
-              <h2>TWR estimé</h2>
+              <h2>Performance du périmètre</h2>
               <p className="muted">
-                Rendement chaîné corrigé des apports, retraits et
-                transferts qui entrent ou sortent du périmètre.
+                Gain total calculé uniquement sur les comptes du
+                périmètre sélectionné, hors comptes décochés.
               </p>
             </div>
             <strong>{formatSignedPercent(performanceAnalytics.twrPercent)}</strong>

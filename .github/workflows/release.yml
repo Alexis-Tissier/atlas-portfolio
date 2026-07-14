@@ -80,7 +80,13 @@ jobs:
           tagName: v__VERSION__-alpha
           releaseName: Atlas Portfolio v__VERSION__ alpha
           releaseBody: |
-            Premiere version alpha d'Atlas Portfolio.
+            Version alpha d'Atlas Portfolio.
+
+            Nouveautes principales :
+            - selection du perimetre par compte ;
+            - tableaux et graphiques adaptes aux comptes selectionnes ;
+            - correction de la performance du perimetre ;
+            - divers correctifs d'affichage et de calcul.
 
             Telechargements :
             - Fedora / RHEL : fichier `.rpm`
