@@ -86,6 +86,8 @@ jobs:
             - selection du perimetre par compte ;
             - tableaux et graphiques adaptes aux comptes selectionnes ;
             - correction de la performance du perimetre ;
+            - classement des positions par secteur ;
+            - correction manuelle du secteur de chaque ligne ;
             - divers correctifs d'affichage et de calcul.
 
             Telechargements :

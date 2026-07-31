@@ -1,0 +1,307 @@
+.sector-allocation-card {
+  display: grid;
+  gap: 18px;
+}
+
+.sector-allocation-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.sector-allocation-heading h2,
+.sector-allocation-heading p {
+  margin-top: 0;
+}
+
+.sector-allocation-summary {
+  min-width: 190px;
+  padding: 12px 14px;
+  border: 1px solid #e5e9ee;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.sector-allocation-summary span,
+.sector-allocation-summary small {
+  display: block;
+  color: #8c97a4;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.sector-allocation-summary strong {
+  display: block;
+  margin: 5px 0 2px;
+  color: #253142;
+  font-size: 16px;
+}
+
+.sector-ranking-list {
+  display: grid;
+  gap: 4px;
+}
+
+.sector-ranking-row {
+  display: grid;
+  grid-template-columns: 32px minmax(210px, 1.2fr) minmax(180px, 1.8fr) 72px 105px;
+  align-items: center;
+  gap: 14px;
+  min-height: 58px;
+  padding: 8px 6px;
+  border-bottom: 1px solid #eef0f2;
+}
+
+.sector-ranking-row:last-child {
+  border-bottom: 0;
+}
+
+.sector-ranking-index {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 9px;
+  background: #f1f3f5;
+  color: #738090;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.sector-ranking-label > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sector-ranking-label strong {
+  color: #253142;
+  font-size: 13px;
+}
+
+.sector-ranking-label small {
+  display: block;
+  overflow: hidden;
+  margin-top: 4px;
+  color: #929ca8;
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sector-ranking-dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
+  border-radius: 50%;
+}
+
+.sector-ranking-bar {
+  height: 12px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #eef1f4;
+}
+
+.sector-ranking-bar span {
+  display: block;
+  height: 100%;
+  min-width: 4px;
+  border-radius: inherit;
+}
+
+.sector-ranking-percent,
+.sector-ranking-value {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.sector-ranking-percent {
+  color: #253142;
+  font-size: 13px;
+}
+
+.sector-ranking-value {
+  color: #7c8794;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.sector-allocation-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sector-allocation-footer span {
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: #f3f5f7;
+  color: #7e8996;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.sector-classification-details {
+  border-top: 1px solid #e8ebef;
+  padding-top: 15px;
+}
+
+.sector-classification-details summary {
+  width: fit-content;
+  cursor: pointer;
+  color: #526172;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.sector-classification-details > p {
+  max-width: 850px;
+  margin: 10px 0 14px;
+  color: #8d97a3;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.sector-classification-table {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid #e8ebef;
+  border-radius: 12px;
+}
+
+.sector-classification-row {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(220px, 300px) 105px;
+  align-items: center;
+  gap: 16px;
+  padding: 11px 13px;
+  border-bottom: 1px solid #edf0f2;
+}
+
+.sector-classification-row:last-child {
+  border-bottom: 0;
+}
+
+.sector-classification-row > div strong,
+.sector-classification-row > div span {
+  display: block;
+}
+
+.sector-classification-row > div strong {
+  color: #293545;
+  font-size: 13px;
+}
+
+.sector-classification-row > div span,
+.sector-classification-row > span {
+  margin-top: 3px;
+  color: #929ca8;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.sector-classification-row > span {
+  margin-top: 0;
+  text-align: right;
+}
+
+.sector-classification-row select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #dce1e6;
+  border-radius: 9px;
+  background: #fff;
+  color: #3b4655;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.sector-allocation-empty,
+.sector-allocation-error {
+  margin: 0;
+  padding: 18px;
+  border-radius: 12px;
+  font-size: 13px;
+}
+
+.sector-allocation-empty {
+  border: 1px dashed #d9dfe5;
+  color: #8994a0;
+  text-align: center;
+}
+
+.sector-allocation-error {
+  border: 1px solid #eccaca;
+  background: #fff5f5;
+  color: #a74b4b;
+}
+
+.app-shell.dark .sector-allocation-summary,
+.app-shell.dark .sector-ranking-index,
+.app-shell.dark .sector-allocation-footer span {
+  border-color: #374151;
+  background: #202935;
+}
+
+.app-shell.dark .sector-allocation-summary strong,
+.app-shell.dark .sector-ranking-label strong,
+.app-shell.dark .sector-ranking-percent,
+.app-shell.dark .sector-classification-row > div strong {
+  color: #edf1f5;
+}
+
+.app-shell.dark .sector-ranking-row,
+.app-shell.dark .sector-classification-details,
+.app-shell.dark .sector-classification-row,
+.app-shell.dark .sector-classification-table {
+  border-color: #35404c;
+}
+
+.app-shell.dark .sector-ranking-bar {
+  background: #303a46;
+}
+
+.app-shell.dark .sector-classification-row select {
+  border-color: #46515e;
+  background: #202935;
+  color: #e7ebef;
+}
+
+@media (max-width: 1050px) {
+  .sector-ranking-row {
+    grid-template-columns: 32px minmax(190px, 1.2fr) minmax(140px, 1fr) 65px 95px;
+    gap: 10px;
+  }
+}
+
+@media (max-width: 820px) {
+  .sector-allocation-heading {
+    display: grid;
+  }
+
+  .sector-allocation-summary {
+    min-width: 0;
+  }
+
+  .sector-ranking-row {
+    grid-template-columns: 28px minmax(0, 1fr) 68px;
+  }
+
+  .sector-ranking-bar,
+  .sector-ranking-value {
+    display: none;
+  }
+
+  .sector-classification-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .sector-classification-row > span {
+    text-align: left;
+  }
+}

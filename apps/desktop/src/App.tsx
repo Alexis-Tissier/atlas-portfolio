@@ -1,6 +1,7 @@
 import { Fragment, FormEvent, memo, useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
+import SectorAllocationCard from "./SectorAllocationCard";
 import { monthlyContribution } from "./mocks/mockPortfolio";
 import { formatEuro, getAllocationRows, getPositionRows, getPortfolioSummary } from "./core/portfolioCalculations";
 import {
@@ -3161,6 +3162,11 @@ function AllocationPage({
             </div>
           </div>
         </article>
+
+        <SectorAllocationCard
+          isPrivacyMode={isPrivacyMode}
+          positions={positions}
+        />
 
         <article className="card allocation-wide-card">
           <h2>Classes par compte</h2>

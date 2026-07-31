@@ -40,6 +40,7 @@ L’objectif est de remplacer progressivement Portfolio Performance par une appl
 - correspondance flexible des colonnes CSV ;
 - détection des doublons et import groupé atomique ;
 - répartition par classe d’actifs et par compte ;
+- classement du portefeuille par secteur avec correction manuelle ;
 - page Performance : apports, gain total, latent, réalisé, dividendes, frais, XIRR et TWR estimé ;
 - recommandations de prochain apport et alertes de concentration ;
 - prévisionnel patrimonial ;
