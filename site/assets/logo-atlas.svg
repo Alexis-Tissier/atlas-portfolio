@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 150" role="img" aria-labelledby="title desc">
+  <title id="title">Atlas Portfolio</title>
+  <desc id="desc">Globe stylisé et courbe de patrimoine montante.</desc>
+  <defs>
+    <linearGradient id="atlasGradient" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1a74ff"/>
+      <stop offset="1" stop-color="#18b6a4"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(8 8)">
+    <circle cx="67" cy="67" r="51" fill="none" stroke="#092542" stroke-width="3"/>
+    <path d="M16 67h102M67 16c-17 14-27 31-27 51s10 38 27 51M67 16c17 14 27 31 27 51s-10 38-27 51"
+          fill="none" stroke="#92a8bd" stroke-width="2"/>
+    <path d="M23 43c18 8 68 8 88 0M23 91c18-8 68-8 88 0"
+          fill="none" stroke="#c2cfda" stroke-width="2"/>
+    <path d="M25 94 46 77 62 84 80 53 100 42 111 30"
+          fill="none" stroke="url(#atlasGradient)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    <g fill="#fff" stroke="#18a995" stroke-width="3">
+      <circle cx="25" cy="94" r="5"/>
+      <circle cx="46" cy="77" r="5"/>
+      <circle cx="62" cy="84" r="5"/>
+      <circle cx="80" cy="53" r="5"/>
+      <circle cx="100" cy="42" r="5"/>
+      <circle cx="111" cy="30" r="5"/>
+    </g>
+  </g>
+  <text x="145" y="74" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="56" font-weight="760" letter-spacing="-2.3" fill="#092542">ATLAS</text>
+  <text x="149" y="108" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="16" font-weight="650" letter-spacing="7.5" fill="#687d91">PORTFOLIO</text>
+</svg>

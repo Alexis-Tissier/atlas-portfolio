@@ -1,0 +1,60 @@
+name: Déployer le site Atlas
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "site/**"
+      - "apps/desktop/src/**"
+      - "apps/desktop/demo/**"
+      - "apps/desktop/vite.demo.config.ts"
+      - "apps/desktop/package.json"
+      - "apps/desktop/package-lock.json"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v4
+
+      - name: Installer Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Installer les dépendances
+        working-directory: apps/desktop
+        run: npm ci
+
+      - name: Construire la vraie démo web
+        working-directory: apps/desktop
+        run: npx vite build --config vite.demo.config.ts
+
+      - name: Configurer GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Préparer les fichiers statiques
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Déployer
+        id: deployment
+        uses: actions/deploy-pages@v4

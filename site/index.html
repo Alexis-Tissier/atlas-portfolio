@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Atlas Portfolio — Votre patrimoine, enfin lisible</title>
+  <meta name="description" content="Atlas Portfolio est une application locale et moderne pour suivre comptes, positions, performances, allocations et objectifs patrimoniaux.">
+  <meta name="theme-color" content="#071b31">
+  <meta property="og:title" content="Atlas Portfolio">
+  <meta property="og:description" content="Suivez votre patrimoine avec une application locale, claire et moderne.">
+  <meta property="og:image" content="assets/portfolio-light.png">
+  <meta property="og:type" content="website">
+  <link rel="icon" href="assets/logo-atlas.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="ambient ambient-one"></div>
+  <div class="ambient ambient-two"></div>
+
+  <header class="site-header" id="top">
+    <a class="brand" href="#top" aria-label="Atlas Portfolio, accueil">
+      <img src="assets/logo-atlas.svg" alt="Atlas Portfolio">
+    </a>
+
+    <nav class="desktop-nav" aria-label="Navigation principale">
+      <a href="#product">Produit</a>
+      <a href="#demo">Démo</a>
+      <a href="#privacy">Confidentialité</a>
+      <a href="#download">Télécharger</a>
+    </nav>
+
+    <div class="header-actions">
+      <a class="ghost-button compact" href="https://github.com/Alexis-Tissier/atlas-portfolio" target="_blank" rel="noreferrer">
+        GitHub
+      </a>
+      <a class="primary-button compact js-download" href="https://github.com/Alexis-Tissier/atlas-portfolio/releases/latest">
+        Télécharger
+      </a>
+    </div>
+
+    <button class="mobile-menu-button" type="button" aria-expanded="false" aria-controls="mobile-nav">
+      <span></span><span></span>
+    </button>
+  </header>
+
+  <nav class="mobile-nav" id="mobile-nav" hidden>
+    <a href="#product">Produit</a>
+    <a href="#demo">Démo</a>
+    <a href="#privacy">Confidentialité</a>
+    <a href="#download">Télécharger</a>
+  </nav>
+
+  <main>
+    <section class="hero section-shell">
+      <div class="hero-copy reveal">
+        <div class="eyebrow"><span></span> Application patrimoniale locale et visuelle</div>
+        <h1>Votre patrimoine,<br><em>enfin maîtrisé.</em></h1>
+        <p class="hero-lead">
+          Atlas réunit comptes, positions, performances, recommandations et projections dans une interface claire — sans connexion bancaire et sans envoyer vos données dans le cloud.
+        </p>
+
+        <div class="hero-actions">
+          <a class="primary-button large js-download" href="https://github.com/Alexis-Tissier/atlas-portfolio/releases/latest">
+            <span class="button-icon">↓</span>
+            <span class="download-copy">Télécharger Atlas</span>
+          </a>
+          <button class="ghost-button large js-open-demo" type="button">
+            Essayer avec des données fictives
+            <span aria-hidden="true">↗</span>
+          </button>
+        </div>
+
+        <div class="hero-notes">
+          <span><i class="status-dot"></i> Linux, Windows et macOS</span>
+          <span>Gratuit et sans compte</span>
+          <span>Aucun compte requis</span>
+        </div>
+      </div>
+
+      <div class="hero-visual reveal delay-1" aria-label="Aperçu réel de l’application Atlas">
+        <div class="app-window hero-window">
+          <div class="window-bar">
+            <div class="traffic"><span></span><span></span><span></span></div>
+            <div class="window-title">Atlas Portfolio</div>
+            <div class="window-state">Capture réelle · base de démonstration</div>
+          </div>
+          <img src="assets/portfolio-light.png" alt="Page Portefeuille réelle d’Atlas Portfolio">
+        </div>
+
+        <div class="floating-card floating-private">
+          <span class="lock-shape">⌁</span>
+          <div>
+            <strong>100 % local</strong>
+            <small>La base SQLite reste sur votre ordinateur</small>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="proof-strip" aria-label="Principes d’Atlas">
+      <div>LOCAL-FIRST</div>
+      <div>AUCUNE CONNEXION BANCAIRE</div>
+      <div>CALCULS EXPLICABLES</div>
+      <div>IMPORT / EXPORT CSV</div>
+    </section>
+
+    <section class="section-shell product-section" id="product">
+      <div class="section-heading reveal">
+        <div class="eyebrow"><span></span> Pensé pour comprendre, pas seulement afficher</div>
+        <h2>Tout ce qui compte.<br><em>Sans le bruit.</em></h2>
+        <p>
+          Une lecture structurée de votre patrimoine, des performances et des risques,
+          avec suffisamment de détail pour vérifier chaque résultat.
+        </p>
+      </div>
+
+      <div class="feature-grid">
+        <article class="feature-card large-card reveal">
+          <div class="feature-kicker">01 — Vision globale</div>
+          <h3>Un tableau de bord pour chaque décision.</h3>
+          <p>
+            Valeur totale, cash disponible, évolution, positions principales et allocation :
+            Atlas rassemble les informations utiles sans multiplier les écrans inutiles.
+          </p>
+          <div class="mini-dashboard">
+            <div class="mini-metrics">
+              <div><span>Patrimoine</span><strong>42 680 €</strong></div>
+              <div><span>Performance</span><strong class="positive">+4 870 €</strong></div>
+              <div><span>Cash</span><strong>3 120 €</strong></div>
+            </div>
+            <svg class="mini-line-chart" viewBox="0 0 720 210" role="img" aria-label="Exemple d’évolution patrimoniale">
+              <defs>
+                <linearGradient id="areaGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#4d8df7" stop-opacity=".28"/>
+                  <stop offset="1" stop-color="#4d8df7" stop-opacity="0"/>
+                </linearGradient>
+              </defs>
+              <g class="grid-lines">
+                <line x1="18" y1="28" x2="702" y2="28"/>
+                <line x1="18" y1="84" x2="702" y2="84"/>
+                <line x1="18" y1="140" x2="702" y2="140"/>
+                <line x1="18" y1="196" x2="702" y2="196"/>
+              </g>
+              <path class="area" d="M18 178 C70 170 88 174 126 150 S190 145 226 118 S292 122 337 100 S405 105 456 78 S526 86 568 58 S645 62 702 28 L702 196 L18 196 Z"/>
+              <path class="line" d="M18 178 C70 170 88 174 126 150 S190 145 226 118 S292 122 337 100 S405 105 456 78 S526 86 568 58 S645 62 702 28"/>
+              <circle cx="702" cy="28" r="7"/>
+            </svg>
+          </div>
+        </article>
+
+        <article class="feature-card reveal delay-1">
+          <div class="feature-icon allocation-icon">
+            <span></span>
+          </div>
+          <div class="feature-kicker">02 — Allocation</div>
+          <h3>Voir les concentrations avant qu’elles ne deviennent un risque.</h3>
+          <p>Classes d’actifs, comptes, secteurs et poids de chaque ligne.</p>
+        </article>
+
+        <article class="feature-card reveal delay-2">
+          <div class="feature-icon performance-icon">↗</div>
+          <div class="feature-kicker">03 — Performance</div>
+          <h3>Distinguer apports, gains, dividendes et frais.</h3>
+          <p>XIRR, TWR estimé, latent et réalisé restent lisibles et vérifiables.</p>
+        </article>
+
+        <article class="feature-card reveal">
+          <div class="feature-icon import-icon">⇄</div>
+          <div class="feature-kicker">04 — Données</div>
+          <h3>Importer, corriger et garder le contrôle.</h3>
+          <p>Import CSV flexible, détection des doublons et export de sauvegarde.</p>
+        </article>
+
+        <article class="feature-card reveal delay-1">
+          <div class="feature-icon forecast-icon">⌁</div>
+          <div class="feature-kicker">05 — Projection</div>
+          <h3>Transformer un objectif en trajectoire.</h3>
+          <p>Simulez versements mensuels, durée et rendement annuel.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="demo-section" id="demo">
+      <div class="section-shell">
+        <div class="demo-heading reveal">
+          <div>
+            <div class="eyebrow light"><span></span> La vraie interface en mode web</div>
+            <h2>Essayer Atlas<br><em>sans rien installer.</em></h2>
+          </div>
+          <div class="demo-heading-copy">
+            <p>
+              Cette démo réutilise directement le code React et les styles de l’application desktop.
+              Seule la couche Tauri/SQLite est remplacée par un portefeuille fictif en mémoire.
+            </p>
+            <div class="demo-badges">
+              <span>Code réel de l’application</span>
+              <span>Données fictives</span>
+              <span>Aucun enregistrement</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="real-demo-shell reveal">
+          <div class="real-demo-toolbar">
+            <div>
+              <span class="live-dot"></span>
+              <strong>Atlas — mode découverte</strong>
+              <small>Navigation, thème sombre, masquage des prix et prévisionnel fonctionnent.</small>
+            </div>
+            <a class="ghost-button compact" href="demo/index.html" target="_blank" rel="noreferrer">Ouvrir en grand ↗</a>
+          </div>
+          <iframe class="real-demo-frame" src="demo/index.html" title="Démo interactive réelle d’Atlas Portfolio" loading="lazy"></iframe>
+        </div>
+      </div>
+    </section>
+
+    <section class="section-shell product-tour-section">
+      <div class="section-heading split-heading reveal">
+        <div>
+          <div class="eyebrow"><span></span> Un parcours cohérent</div>
+          <h2>Chaque onglet répond<br><em>à une vraie question.</em></h2>
+        </div>
+        <p>
+          Atlas évite d’empiler les indicateurs sur une seule page. Le portefeuille, les
+          performances, les risques et les projections restent séparés, mais reliés entre eux.
+        </p>
+      </div>
+
+      <div class="product-tour-grid">
+        <div class="tour-copy reveal">
+          <button class="tour-tab active" type="button" data-tour="portfolio"><span>01</span><div><strong>Portefeuille & aperçu</strong><small>Comprendre la valeur totale, le cash et les lignes dominantes.</small></div></button>
+          <button class="tour-tab" type="button" data-tour="allocation"><span>02</span><div><strong>Répartition & secteurs</strong><small>Repérer les concentrations par classe, compte et secteur.</small></div></button>
+          <button class="tour-tab" type="button" data-tour="performance"><span>03</span><div><strong>Performance</strong><small>Séparer les apports, les gains, les dividendes et les frais.</small></div></button>
+          <button class="tour-tab" type="button" data-tour="recommendations"><span>04</span><div><strong>Recommandations</strong><small>Transformer les écarts d’allocation en plan d’action concret.</small></div></button>
+          <button class="tour-tab" type="button" data-tour="forecast"><span>05</span><div><strong>Prévisionnel</strong><small>Projeter le patrimoine avec les apports et le rendement choisis.</small></div></button>
+        </div>
+
+        <figure class="tour-visual reveal delay-1">
+          <div class="tour-visual-head">
+            <div><strong id="tour-title">Portefeuille et aperçu</strong><small id="tour-subtitle">La valeur totale, le cash, les comptes et les principales positions.</small></div>
+            <span>Capture réelle</span>
+          </div>
+          <div class="tour-image-stage">
+            <img id="tour-image" src="assets/portfolio-light.png" alt="Page Portefeuille réelle dans Atlas Portfolio">
+          </div>
+        </figure>
+      </div>
+    </section>
+
+<section class="privacy-section" id="privacy">
+      <div class="section-shell privacy-grid">
+        <div class="privacy-copy reveal">
+          <div class="eyebrow light"><span></span> La confidentialité comme architecture</div>
+          <h2>Vos chiffres restent<br><em>chez vous.</em></h2>
+          <p>
+            Atlas n’a pas besoin de compte en ligne, ne se connecte pas à votre banque et
+            enregistre votre portefeuille dans une base SQLite locale.
+          </p>
+          <ul>
+            <li><span>01</span><div><strong>Aucune connexion bancaire</strong><p>Vous contrôlez les données importées et les cours récupérés.</p></div></li>
+            <li><span>02</span><div><strong>Base locale indépendante</strong><p>L’application installée fonctionne sans le dossier du projet.</p></div></li>
+            <li><span>03</span><div><strong>Export et sauvegarde</strong><p>Vos données peuvent être sauvegardées et déplacées par vous.</p></div></li>
+          </ul>
+        </div>
+
+        <div class="privacy-visual reveal delay-1">
+          <div class="privacy-orbit orbit-one"></div>
+          <div class="privacy-orbit orbit-two"></div>
+          <div class="privacy-core">
+            <span class="privacy-lock">⌾</span>
+            <strong>atlas.sqlite</strong>
+            <small>Stockée localement</small>
+          </div>
+          <div class="privacy-node node-one"><span></span>Transactions</div>
+          <div class="privacy-node node-two"><span></span>Positions</div>
+          <div class="privacy-node node-three"><span></span>Objectifs</div>
+          <div class="privacy-node node-four"><span></span>Historique</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section-shell download-section" id="download">
+      <div class="download-panel reveal">
+        <div class="download-copy-panel">
+          <div class="eyebrow"><span></span> Télécharger Atlas</div>
+          <h2>Construisez une vision claire de votre patrimoine.</h2>
+          <p>
+            Téléchargez l’installateur adapté à votre système. Atlas est encore en
+            évolution rapide : conservez une sauvegarde de vos données et vérifiez les calculs.
+          </p>
+
+          <div class="platforms">
+            <div><span class="platform-icon">◉</span><strong>Fedora / RHEL</strong><small>Paquet .rpm</small></div>
+            <div><span class="platform-icon">◌</span><strong>Ubuntu / Debian</strong><small>Paquet .deb</small></div>
+            <div><span class="platform-icon">⊞</span><strong>Windows</strong><small>Installateur .exe</small></div>
+            <div><span class="platform-icon">●</span><strong>macOS</strong><small>Apple Silicon et Intel</small></div>
+          </div>
+        </div>
+
+        <div class="download-action-panel">
+          <img src="assets/logo-atlas.svg" alt="Atlas Portfolio">
+          <span class="version-label">Dernière version disponible</span>
+          <a class="primary-button large wide js-download" href="https://github.com/Alexis-Tissier/atlas-portfolio/releases/latest">
+            <span class="button-icon">↓</span>
+            <span class="download-copy">Voir les téléchargements</span>
+          </a>
+          <button class="ghost-button wide js-open-demo" type="button">Essayer avant de télécharger</button>
+          <small>Le bouton ouvre la dernière release GitHub officielle.</small>
+        </div>
+      </div>
+    </section>
+
+    <section class="section-shell faq-section">
+      <div class="section-heading reveal">
+        <div class="eyebrow"><span></span> Questions fréquentes</div>
+        <h2>Avant de commencer.</h2>
+      </div>
+
+      <div class="faq-list">
+        <details class="reveal">
+          <summary>La démo utilise-t-elle mes données ?<span>+</span></summary>
+          <p>Non. Le mode découverte de cette page utilise uniquement des valeurs fictives conservées en mémoire jusqu’au rechargement.</p>
+        </details>
+        <details class="reveal delay-1">
+          <summary>Atlas se connecte-t-il à ma banque ?<span>+</span></summary>
+          <p>Non. Les comptes et opérations sont saisis ou importés par l’utilisateur. Atlas ne demande aucun identifiant bancaire.</p>
+        </details>
+        <details class="reveal delay-2">
+          <summary>Où se trouve la base de données ?<span>+</span></summary>
+          <p>Sous Linux, elle est stockée par défaut dans <code>~/.local/share/atlas-portfolio/atlas.sqlite</code>. Les emplacements Windows et macOS suivent les dossiers de données standards du système.</p>
+        </details>
+        <details class="reveal">
+          <summary>Pourquoi Windows ou macOS peuvent-ils afficher un avertissement ?<span>+</span></summary>
+          <p>Les installateurs ne sont pas encore signés officiellement. Windows ou macOS peuvent donc demander une confirmation lors du premier lancement.</p>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="footer-main section-shell">
+      <div>
+        <img src="assets/logo-atlas.svg" alt="Atlas Portfolio">
+        <p>Une application locale pour suivre et comprendre son patrimoine.</p>
+      </div>
+      <div class="footer-links">
+        <div><strong>Produit</strong><a href="#product">Fonctionnalités</a><a href="#demo">Démo</a><a href="#download">Télécharger</a></div>
+        <div><strong>Projet</strong><a href="https://github.com/Alexis-Tissier/atlas-portfolio" target="_blank" rel="noreferrer">GitHub</a><a href="https://github.com/Alexis-Tissier/atlas-portfolio/releases/latest">Releases</a><a href="https://github.com/Alexis-Tissier/atlas-portfolio/issues" target="_blank" rel="noreferrer">Signaler un problème</a></div>
+      </div>
+    </div>
+    <div class="footer-bottom section-shell">
+      <span>© 2026 Alexis Tissier. Tous droits réservés.</span>
+      <span>Atlas ne fournit pas de conseil financier.</span>
+    </div>
+  </footer>
+
+  <div class="demo-modal" aria-hidden="true">
+    <div class="demo-modal-backdrop"></div>
+    <div class="demo-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="demo-modal-title">
+      <button class="demo-modal-close" type="button" aria-label="Fermer la démo">×</button>
+      <div class="demo-modal-content">
+        <span class="modal-eyebrow">Mode découverte</span>
+        <h2 id="demo-modal-title">Le vrai frontend Atlas,<br>avec des données fictives.</h2>
+        <p>La démo embarque le code réel de l’application. Les appels Tauri sont remplacés par un portefeuille fictif et rien n’est sauvegardé.</p>
+        <button class="primary-button large demo-modal-start" type="button">Ouvrir la démo interactive</button>
+      </div>
+      <div class="modal-preview">
+        <div class="modal-preview-sidebar"></div>
+        <div class="modal-preview-content">
+          <span></span><span></span><span></span>
+          <div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -53,3 +53,7 @@ scripts/repair-dev-current-prices.sh
 .local/
 *.bak
 *.bak_*
+
+site.backup-*/
+
+site/demo/
