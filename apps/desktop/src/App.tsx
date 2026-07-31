@@ -2188,65 +2188,395 @@ function buildPerformanceBreakdown(
     .sort((left, right) => right.value - left.value);
 }
 
+type PerformanceMiniChartKind = "line" | "contributions";
+
+type NiceChartScale = {
+  min: number;
+  max: number;
+  step: number;
+  ticks: number[];
+};
+
+function formatChartAxisEuro(
+  value: number,
+  isPrivacyMode: boolean,
+) {
+  if (isPrivacyMode) {
+    return "••••••";
+  }
+
+  const absoluteValue = Math.abs(value);
+
+  if (absoluteValue >= 1_000_000) {
+    return `${(value / 1_000_000).toLocaleString("fr-FR", {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1,
+    })} M€`;
+  }
+
+  if (absoluteValue >= 1_000) {
+    return `${(value / 1_000).toLocaleString("fr-FR", {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1,
+    })} k€`;
+  }
+
+  return `${Math.round(value).toLocaleString("fr-FR")} €`;
+}
+
+function roundChartNumber(value: number) {
+  return Number(value.toPrecision(12));
+}
+
+function niceChartStep(range: number, targetIntervals: number) {
+  const safeRange = Math.max(Math.abs(range), 0.000001);
+  const roughStep = safeRange / Math.max(targetIntervals, 1);
+  const magnitude = 10 ** Math.floor(Math.log10(roughStep));
+  const fraction = roughStep / magnitude;
+
+  const niceFraction =
+    fraction <= 1
+      ? 1
+      : fraction <= 2
+        ? 2
+        : fraction <= 2.5
+          ? 2.5
+          : fraction <= 5
+            ? 5
+            : 10;
+
+  return niceFraction * magnitude;
+}
+
+function buildNiceChartScale(
+  values: number[],
+  options: {
+    includeZero?: boolean;
+    paddingRatio?: number;
+    targetIntervals?: number;
+  } = {},
+): NiceChartScale {
+  const finiteValues = values.filter(Number.isFinite);
+  const includeZero = options.includeZero ?? false;
+  const paddingRatio = options.paddingRatio ?? 0.06;
+  const targetIntervals = options.targetIntervals ?? 5;
+
+  let rawMin = finiteValues.length ? Math.min(...finiteValues) : 0;
+  let rawMax = finiteValues.length ? Math.max(...finiteValues) : 1;
+
+  if (includeZero) {
+    rawMin = Math.min(rawMin, 0);
+    rawMax = Math.max(rawMax, 0);
+  }
+
+  if (Math.abs(rawMax - rawMin) < 0.000001) {
+    const fallbackPadding = Math.max(Math.abs(rawMax) * 0.08, 1);
+    rawMin -= fallbackPadding;
+    rawMax += fallbackPadding;
+  }
+
+  const rawRange = Math.max(rawMax - rawMin, 1);
+  let paddedMin = rawMin - rawRange * paddingRatio;
+  let paddedMax = rawMax + rawRange * paddingRatio;
+
+  if (includeZero) {
+    paddedMin = Math.min(paddedMin, 0);
+    paddedMax = Math.max(paddedMax, 0);
+  }
+
+  let step = niceChartStep(
+    paddedMax - paddedMin,
+    targetIntervals,
+  );
+  let min = Math.floor(paddedMin / step) * step;
+  let max = Math.ceil(paddedMax / step) * step;
+
+  if (!includeZero && rawMin >= 0) {
+    min = Math.max(0, min);
+  }
+
+  let intervalCount = Math.round((max - min) / step);
+
+  while (intervalCount > 7) {
+    step *= 2;
+    min = Math.floor(paddedMin / step) * step;
+    max = Math.ceil(paddedMax / step) * step;
+
+    if (!includeZero && rawMin >= 0) {
+      min = Math.max(0, min);
+    }
+
+    intervalCount = Math.round((max - min) / step);
+  }
+
+  const ticks = Array.from(
+    { length: intervalCount + 1 },
+    (_, index) => roundChartNumber(max - index * step),
+  );
+
+  return {
+    min: roundChartNumber(min),
+    max: roundChartNumber(max),
+    step: roundChartNumber(step),
+    ticks,
+  };
+}
+
+function buildMonthlyContributionSeries(
+  data: PerformanceSeriesPoint[],
+) {
+  const sortedData = [...data].sort(
+    (left, right) =>
+      parsePerformanceDate(left.date)
+      - parsePerformanceDate(right.date),
+  );
+
+  const lastPointByMonth = new Map<string, PerformanceSeriesPoint>();
+
+  for (const point of sortedData) {
+    const date = new Date(`${point.date}T12:00:00`);
+    const monthKey = Number.isNaN(date.getTime())
+      ? point.date
+      : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+
+    lastPointByMonth.set(monthKey, point);
+  }
+
+  const monthlyData = [...lastPointByMonth.values()];
+
+  return monthlyData.length >= 2 ? monthlyData : sortedData;
+}
+
 function PerformanceMiniChart({
   data,
   emptyMessage,
   formatter,
+  kind = "line",
 }: {
   data: PerformanceSeriesPoint[];
   emptyMessage: string;
   formatter: (value: number) => string;
+  kind?: PerformanceMiniChartKind;
 }) {
-  if (data.length < 2) {
+  const chartData =
+    kind === "contributions"
+      ? buildMonthlyContributionSeries(data)
+      : data;
+
+  if (chartData.length < 2) {
     return <p className="muted mini-chart-empty">{emptyMessage}</p>;
   }
 
-  const chartWidth = 420;
-  const chartHeight = 160;
-  const topPadding = 18;
-  const bottomPadding = 24;
-  const values = data.map((point) => point.value);
-  const maxValue = Math.max(...values, 0);
-  const minValue = Math.min(...values, 0);
-  const range = Math.max(maxValue - minValue, 1);
+  const chartWidth = 720;
+  const chartHeight = 210;
+  const topPadding = 12;
+  const bottomPadding = 28;
+  const usableHeight = chartHeight - topPadding - bottomPadding;
+  const plotBottom = topPadding + usableHeight;
 
-  const points = data.map((point, index) => {
-    const x = data.length === 1 ? chartWidth / 2 : (index / (data.length - 1)) * chartWidth;
-    const y = topPadding + ((maxValue - point.value) / range) * (chartHeight - topPadding - bottomPadding);
+  const cumulativeValues = chartData.map((point) => point.value);
+  const periodChanges = chartData.map((point, index) =>
+    index === 0
+      ? point.value
+      : point.value - chartData[index - 1].value,
+  );
 
-    return { x, y };
+  const scaleValues =
+    kind === "contributions"
+      ? [...cumulativeValues, ...periodChanges, 0]
+      : [...cumulativeValues, 0];
+
+  const scale = buildNiceChartScale(scaleValues, {
+    includeZero: true,
+    paddingRatio: 0.04,
+    targetIntervals: 5,
+  });
+
+  const range = Math.max(scale.max - scale.min, 1);
+  const yForValue = (value: number) =>
+    topPadding + ((scale.max - value) / range) * usableHeight;
+
+  const horizontalInset =
+    kind === "contributions"
+      ? Math.min(
+          20,
+          chartWidth / Math.max(chartData.length, 1) / 2,
+        )
+      : 0;
+  const drawableWidth = chartWidth - horizontalInset * 2;
+
+  const points = chartData.map((point, index) => {
+    const x =
+      chartData.length === 1
+        ? chartWidth / 2
+        : horizontalInset
+          + (index / (chartData.length - 1)) * drawableWidth;
+
+    return {
+      x,
+      y: yForValue(point.value),
+    };
   });
 
   const linePath = points
-    .map((point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
+    .map(
+      (point, index) =>
+        `${index === 0 ? "M" : "L"}${point.x.toFixed(2)} ${point.y.toFixed(2)}`,
+    )
     .join(" ");
 
-  const yLabels = [maxValue, (maxValue + minValue) / 2, minValue];
+  const zeroY = Math.min(
+    Math.max(yForValue(0), topPadding),
+    plotBottom,
+  );
+  const barWidth = Math.max(
+    5,
+    Math.min(
+      28,
+      drawableWidth / Math.max(chartData.length, 1) * 0.54,
+    ),
+  );
+
+  const labelIndexes = chartData
+    .map((_, index) => index)
+    .filter((index) => {
+      if (chartData.length <= 5) return true;
+
+      return (
+        index === 0
+        || index === chartData.length - 1
+        || index % Math.ceil(chartData.length / 4) === 0
+      );
+    });
 
   return (
-    <div className="performance-mini-chart">
+    <div
+      className={
+        kind === "contributions"
+          ? "performance-mini-chart contributions-chart"
+          : "performance-mini-chart"
+      }
+    >
       <div className="mini-y-axis">
-        {yLabels.map((value) => (
-          <span key={value}>{formatter(value)}</span>
+        {scale.ticks.map((value, index) => (
+          <span key={`${value}-${index}`}>
+            {formatter(value)}
+          </span>
         ))}
       </div>
 
-      <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} preserveAspectRatio="none">
-        <line x1="0" x2={chartWidth} y1={points[0].y} y2={points[0].y} className="mini-chart-baseline" />
-        <path d={linePath} className="mini-chart-line" />
+      <svg
+        aria-label={
+          kind === "contributions"
+            ? "Apports mensuels et cumulés"
+            : "Évolution de la performance"
+        }
+        preserveAspectRatio="none"
+        viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+      >
+        {scale.ticks.map((value, index) => {
+          const y = yForValue(value);
+
+          return (
+            <line
+              className="mini-chart-grid-line"
+              key={`mini-grid-${value}-${index}`}
+              x1="0"
+              x2={chartWidth}
+              y1={y}
+              y2={y}
+            />
+          );
+        })}
+
+        <line
+          className="mini-chart-zero-line"
+          x1="0"
+          x2={chartWidth}
+          y1={zeroY}
+          y2={zeroY}
+        />
+
+        {kind === "contributions"
+          ? periodChanges.map((change, index) => {
+              const valueY = yForValue(change);
+              const y = change >= 0 ? valueY : zeroY;
+              const height = Math.max(
+                Math.abs(valueY - zeroY),
+                Math.abs(change) > 0.000001 ? 2 : 0,
+              );
+
+              return (
+                <rect
+                  className={
+                    change >= 0
+                      ? "mini-chart-bar positive-flow"
+                      : "mini-chart-bar negative-flow"
+                  }
+                  height={height}
+                  key={`${chartData[index].date}-${index}`}
+                  rx="3"
+                  width={barWidth}
+                  x={points[index].x - barWidth / 2}
+                  y={y}
+                >
+                  <title>
+                    {formatChartDate(chartData[index].date)} · flux{" "}
+                    {formatChartAxisEuro(change, false)}
+                  </title>
+                </rect>
+              );
+            })
+          : null}
+
+        <path
+          d={linePath}
+          className={
+            kind === "contributions"
+              ? "mini-chart-cumulative-line"
+              : "mini-chart-line"
+          }
+        />
+
+        {points.length > 0 ? (
+          <circle
+            className="mini-chart-end-dot"
+            cx={points[points.length - 1].x}
+            cy={points[points.length - 1].y}
+            r="4.5"
+          >
+            <title>
+              {formatChartDate(chartData[chartData.length - 1].date)}
+              {" · "}
+              {formatter(chartData[chartData.length - 1].value)}
+            </title>
+          </circle>
+        ) : null}
       </svg>
 
       <div className="mini-months">
-        <span>{formatChartDate(data[0].date)}</span>
-        <span>{formatChartDate(data[data.length - 1].date)}</span>
+        {labelIndexes.map((index) => (
+          <span key={`${chartData[index].date}-${index}`}>
+            {formatChartDate(chartData[index].date)}
+          </span>
+        ))}
       </div>
+
+      {kind === "contributions" ? (
+        <div className="performance-mini-chart-legend">
+          <span>
+            <i className="legend-bar" />
+            Flux net du mois
+          </span>
+          <span>
+            <i className="legend-line" />
+            Cumul des apports
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }
-
-
-
-
 
 
 function readStoredValue(key: string, fallback: string) {
@@ -4071,10 +4401,10 @@ function PerformancePage({
         <article className="card performance-card performance-flow-card">
           <div className="card-header performance-section-header">
             <div>
-              <h2>Apports nets cumulés</h2>
+              <h2>Apports nets : flux et cumul</h2>
               <p className="muted">
-                Apports, retraits et transferts qui entrent ou sortent du
-                périmètre. Les transferts internes sont ignorés.
+                Les barres montrent le flux net de chaque mois. La courbe
+                montre le cumul des apports du périmètre.
               </p>
             </div>
           </div>
@@ -4082,7 +4412,8 @@ function PerformancePage({
           <PerformanceMiniChart
             data={performanceAnalytics.externalFlowSeries}
             emptyMessage="Aucun apport ou retrait détecté."
-            formatter={(value) => displayCompactEuro(value, isPrivacyMode)}
+            formatter={(value) => formatChartAxisEuro(value, isPrivacyMode)}
+            kind="contributions"
           />
         </article>
 
@@ -4312,56 +4643,87 @@ function PortfolioChart({
   period: ChartPeriod;
   snapshots: DashboardData["snapshots"];
 }) {
-  const allData = (snapshots.length ? snapshots : [{ date: "Aujourd’hui", total_value: currentTotal }]).map((point) => ({
+  const allData = (
+    snapshots.length
+      ? snapshots
+      : [{ date: "Aujourd’hui", total_value: currentTotal }]
+  ).map((point) => ({
     date: point.date,
     value: point.total_value,
   }));
 
   const data = filterPortfolioChartData(allData, period);
   const values = data.map((point) => point.value);
-  const rawMaxValue = Math.max(...values, currentTotal, 1);
-  const rawMinValue = Math.min(...values);
-  const rawRange = Math.max(rawMaxValue - rawMinValue, rawMaxValue * 0.01, 1);
-  const padding = rawRange * 0.08;
-  const maxValue = rawMaxValue + padding;
-  const minValue = Math.max(0, rawMinValue - padding);
+  const scale = buildNiceChartScale(
+    [...values, currentTotal],
+    {
+      includeZero: false,
+      paddingRatio: 0.04,
+      targetIntervals: 5,
+    },
+  );
+
   const chartWidth = 780;
   const chartHeight = 230;
-  const topPadding = 18;
-  const bottomPadding = 28;
+  const topPadding = 12;
+  const bottomPadding = 26;
   const usableHeight = chartHeight - topPadding - bottomPadding;
-  const range = Math.max(maxValue - minValue, 1);
+  const plotBottom = topPadding + usableHeight;
+  const range = Math.max(scale.max - scale.min, 1);
+
+  const yForValue = (value: number) =>
+    topPadding + ((scale.max - value) / range) * usableHeight;
 
   const points = data.map((point, index) => {
-    const x = data.length === 1 ? chartWidth / 2 : (index / (data.length - 1)) * chartWidth;
-    const y = topPadding + ((maxValue - point.value) / range) * usableHeight;
-    return { x, y };
+    const x =
+      data.length === 1
+        ? chartWidth / 2
+        : (index / (data.length - 1)) * chartWidth;
+
+    return {
+      x,
+      y: yForValue(point.value),
+    };
   });
 
   const linePath = points
-    .map((point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
+    .map(
+      (point, index) =>
+        `${index === 0 ? "M" : "L"}${point.x.toFixed(2)} ${point.y.toFixed(2)}`,
+    )
     .join(" ");
 
-  const areaPath = `${linePath} L${chartWidth} ${chartHeight} L0 ${chartHeight} Z`;
+  const areaPath = points.length
+    ? `${linePath} L${chartWidth} ${plotBottom} L0 ${plotBottom} Z`
+    : "";
 
   const labelIndexes = data
     .map((_, index) => index)
     .filter((index) => {
       if (data.length <= 5) return true;
-      return index === 0 || index === data.length - 1 || index % Math.ceil(data.length / 4) === 0;
+
+      return (
+        index === 0
+        || index === data.length - 1
+        || index % Math.ceil(data.length / 4) === 0
+      );
     });
 
-  const yLabels = [maxValue, minValue + range * 0.75, minValue + range * 0.5, minValue + range * 0.25, minValue];
-
   return (
-    <div className="chart-area">
+    <div className="chart-area chart-area-readable">
       <div className="y-axis">
-        {yLabels.map((value, index) => (
-          <span key={`${value}-${index}`}>{displayCompactEuro(value, isPrivacyMode)}</span>
+        {scale.ticks.map((value, index) => (
+          <span key={`${value}-${index}`}>
+            {formatChartAxisEuro(value, isPrivacyMode)}
+          </span>
         ))}
       </div>
 
-      <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} preserveAspectRatio="none" aria-label="Évolution du patrimoine">
+      <svg
+        aria-label="Évolution du patrimoine"
+        preserveAspectRatio="none"
+        viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+      >
         <defs>
           <linearGradient id="fill" x1="0" x2="0" y1="0" y2="1">
             <stop offset="0%" stopColor="#7da7f5" stopOpacity="0.28" />
@@ -4369,8 +4731,8 @@ function PortfolioChart({
           </linearGradient>
         </defs>
 
-        {yLabels.map((value, index) => {
-          const y = topPadding + ((maxValue - value) / range) * usableHeight;
+        {scale.ticks.map((value, index) => {
+          const y = yForValue(value);
 
           return (
             <line
@@ -4384,8 +4746,12 @@ function PortfolioChart({
           );
         })}
 
-        <path d={areaPath} className="portfolio-chart-area" />
-        <path d={linePath} className="portfolio-chart-line" />
+        {areaPath ? (
+          <path d={areaPath} className="portfolio-chart-area" />
+        ) : null}
+        {linePath ? (
+          <path d={linePath} className="portfolio-chart-line" />
+        ) : null}
 
         {points.length > 0 ? (
           <circle
@@ -4393,18 +4759,29 @@ function PortfolioChart({
             cx={points[points.length - 1].x}
             cy={points[points.length - 1].y}
             r="5"
-          />
+          >
+            <title>
+              {data[data.length - 1].date} ·{" "}
+              {formatChartAxisEuro(
+                data[data.length - 1].value,
+                isPrivacyMode,
+              )}
+            </title>
+          </circle>
         ) : null}
       </svg>
 
       <div className="months">
         {labelIndexes.map((index) => (
-          <span key={`${data[index].date}-${index}`}>{formatChartDate(data[index].date)}</span>
+          <span key={`${data[index].date}-${index}`}>
+            {formatChartDate(data[index].date)}
+          </span>
         ))}
       </div>
     </div>
   );
 }
+
 function PositionsPage({
   isPrivacyMode,
   positions,

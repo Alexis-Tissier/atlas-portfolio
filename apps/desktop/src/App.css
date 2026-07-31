@@ -7428,3 +7428,196 @@ td:first-child { color: #374151; font-weight: 600; }
   color: #9da6b3;
 }
 
+/* atlas-chart-readability-v014 */
+.chart-area-readable {
+  height: 264px;
+  padding-left: 76px;
+}
+
+.chart-area-readable .y-axis {
+  inset: 0 auto 34px 0;
+  width: 68px;
+  align-items: flex-end;
+  padding-right: 10px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+
+.chart-area-readable svg {
+  height: 222px;
+  background: none;
+}
+
+.chart-grid-line {
+  stroke: #e5ebf3;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.portfolio-chart-line,
+.mini-chart-line,
+.mini-chart-cumulative-line {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.portfolio-chart-line {
+  stroke: #6f9ff1;
+  stroke-width: 4;
+}
+
+.portfolio-chart-area {
+  fill: url(#fill);
+}
+
+.portfolio-chart-end-dot,
+.mini-chart-end-dot {
+  fill: #ffffff;
+  stroke: #6f9ff1;
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.performance-mini-chart {
+  min-height: 254px;
+  margin-top: 14px;
+  padding-left: 84px;
+}
+
+.performance-mini-chart svg {
+  width: 100%;
+  height: 210px;
+  overflow: visible;
+  background: none;
+}
+
+.mini-y-axis {
+  inset: 0 auto 42px 0;
+  width: 76px;
+  align-items: flex-end;
+  justify-content: space-between;
+  padding-right: 10px;
+  white-space: nowrap;
+  color: #8d98a8;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+
+.mini-chart-grid-line {
+  stroke: #e7edf4;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.mini-chart-zero-line {
+  stroke: #cfd8e5;
+  stroke-width: 1.2;
+  vector-effect: non-scaling-stroke;
+}
+
+.mini-chart-line {
+  stroke: #6f9ff1;
+  stroke-width: 4;
+}
+
+.mini-chart-cumulative-line {
+  stroke: #386fcf;
+  stroke-width: 3.5;
+}
+
+.mini-chart-bar {
+  vector-effect: non-scaling-stroke;
+}
+
+.mini-chart-bar.positive-flow {
+  fill: #88b0f4;
+  opacity: 0.72;
+}
+
+.mini-chart-bar.negative-flow {
+  fill: #e18a91;
+  opacity: 0.78;
+}
+
+.mini-months {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  color: #8d96a3;
+  font-size: 11px;
+}
+
+.mini-months span {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.contributions-chart {
+  min-height: 288px;
+}
+
+.performance-mini-chart-legend {
+  display: flex;
+  justify-content: flex-end;
+  gap: 18px;
+  margin-top: 14px;
+  color: #7d8796;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.performance-mini-chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.performance-mini-chart-legend i {
+  display: inline-block;
+  flex: 0 0 auto;
+}
+
+.performance-mini-chart-legend .legend-bar {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  background: #88b0f4;
+}
+
+.performance-mini-chart-legend .legend-line {
+  width: 18px;
+  height: 3px;
+  border-radius: 999px;
+  background: #386fcf;
+}
+
+.performance-flow-card {
+  min-height: 360px;
+}
+
+.app-shell.dark .chart-grid-line,
+.app-shell.dark .mini-chart-grid-line {
+  stroke: #313b49;
+}
+
+.app-shell.dark .mini-chart-zero-line {
+  stroke: #4a586a;
+}
+
+.app-shell.dark .portfolio-chart-end-dot,
+.app-shell.dark .mini-chart-end-dot {
+  fill: #202936;
+}
+
+.app-shell.dark .mini-y-axis,
+.app-shell.dark .chart-area-readable .y-axis,
+.app-shell.dark .mini-months,
+.app-shell.dark .performance-mini-chart-legend {
+  color: #a8b2c1;
+}
+

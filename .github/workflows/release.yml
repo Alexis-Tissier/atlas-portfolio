@@ -88,6 +88,8 @@ jobs:
             - correction de la performance du perimetre ;
             - classement des positions par secteur ;
             - correction manuelle du secteur de chaque ligne ;
+            - axes monétaires plus précis et graduations régulières ;
+            - graphique des apports avec flux mensuels et cumul ;
             - divers correctifs d'affichage et de calcul.
 
             Telechargements :
