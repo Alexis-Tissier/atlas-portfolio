@@ -7621,3 +7621,25 @@ td:first-child { color: #374151; font-weight: 600; }
   color: #a8b2c1;
 }
 
+/* atlas-contribution-axis-alignment-v015 */
+.mini-y-axis {
+  position: absolute;
+  top: 0;
+  right: auto;
+  bottom: auto;
+  left: 0;
+  width: 76px;
+  height: 210px;
+  padding: 0 10px 0 0;
+  justify-content: initial;
+  pointer-events: none;
+}
+
+.mini-y-axis span {
+  position: absolute;
+  right: 10px;
+  line-height: 1;
+  transform: translateY(-50%);
+  white-space: nowrap;
+}
+

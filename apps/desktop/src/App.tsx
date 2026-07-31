@@ -2457,9 +2457,12 @@ function PerformanceMiniChart({
           : "performance-mini-chart"
       }
     >
-      <div className="mini-y-axis">
+      <div className="mini-y-axis" aria-hidden="true">
         {scale.ticks.map((value, index) => (
-          <span key={`${value}-${index}`}>
+          <span
+            key={`${value}-${index}`}
+            style={{ top: `${yForValue(value)}px` }}
+          >
             {formatter(value)}
           </span>
         ))}
