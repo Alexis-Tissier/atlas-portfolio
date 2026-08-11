@@ -306,18 +306,15 @@ function externalFlowForTransaction(
     selectedAccountIds,
   );
 
-  if (transaction.transaction_type === "opening_cash") {
-    return accountSelected || toSelected ? safeAmount : 0;
-  }
-
-  if (transaction.transaction_type === "opening_position") {
-    if (!accountSelected) return 0;
-
-    const quantity = Number(transaction.quantity ?? 0);
-    const price = Number(transaction.price ?? 0);
-    const openingCost = quantity * price;
-
-    return Number.isFinite(openingCost) ? openingCost : 0;
+  // Les lignes opening_* sont des ajustements techniques permettant de
+  // reconstruire l'état initial d'Atlas. Elles ne correspondent pas à de
+  // l'argent réellement entré dans le portefeuille à leur date d'écriture et
+  // ne doivent donc jamais casser une sous-période TWR.
+  if (
+    transaction.transaction_type === "opening_cash"
+    || transaction.transaction_type === "opening_position"
+  ) {
+    return 0;
   }
 
   if (transaction.transaction_type === "deposit") {
@@ -373,24 +370,17 @@ function modifiedDietzReturn(
     1,
   );
 
+  // Source de vérité des flux : le journal de transactions. Le champ
+  // invested_capital des anciens snapshots peut contenir des ajustements
+  // techniques d'ouverture ; l'utiliser comme flux implicite créait de faux
+  // décrochages de performance (notamment le -13 % observé sur l'historique).
   const intervalFlows = flows.filter((flow) => {
     const timestamp = performanceTimestamp(flow.date);
     return timestamp > startTimestamp && timestamp <= endTimestamp;
   });
 
-  const transactionFlowTotal = intervalFlows.reduce(
-    (sum, flow) => sum + flow.amount,
-    0,
-  );
-  const capitalDelta = current.investedCapital - previous.investedCapital;
-  const unrecordedFlow = capitalDelta - transactionFlowTotal;
-  const allFlows =
-    Math.abs(unrecordedFlow) > 0.01
-      ? [...intervalFlows, { date: current.date, amount: unrecordedFlow }]
-      : intervalFlows;
-
-  const totalFlow = allFlows.reduce((sum, flow) => sum + flow.amount, 0);
-  const weightedFlow = allFlows.reduce((sum, flow) => {
+  const totalFlow = intervalFlows.reduce((sum, flow) => sum + flow.amount, 0);
+  const weightedFlow = intervalFlows.reduce((sum, flow) => {
     const flowTimestamp = performanceTimestamp(flow.date);
     const remainingDays = Math.max(
       (endTimestamp - flowTimestamp) / millisecondsPerDay,
@@ -428,14 +418,17 @@ function applyTimeWeightedPerformance(
 
   if (selectedAccountIds.size === 0) return data;
 
+  const startTimestamp = performanceTimestamp(data.summary.start_date);
   const snapshots = data.snapshots.map((snapshot) => ({ ...snapshot }));
   const points = snapshots
     .map<TwrPoint | null>((snapshot, snapshotIndex) => {
+      const timestamp = performanceTimestamp(snapshot.date);
       const totalValue = Number(snapshot.total_value);
       const investedCapital = Number(snapshot.invested_capital);
 
       if (
-        performanceTimestamp(snapshot.date) <= 0
+        timestamp <= 0
+        || (startTimestamp > 0 && timestamp < startTimestamp)
         || !Number.isFinite(totalValue)
         || snapshot.invested_capital === null
         || !Number.isFinite(investedCapital)
@@ -490,15 +483,14 @@ function applyTimeWeightedPerformance(
     firstStoredPerformanceValue === null
       ? null
       : Number(firstStoredPerformanceValue);
-  const startTimestamp = performanceTimestamp(data.summary.start_date);
   const firstTimestamp = performanceTimestamp(firstPoint.date);
 
   let cumulativeFactor = 1;
 
-  // Si l'historique de snapshots commence après le début réel du portefeuille,
-  // on conserve la performance déjà connue au premier snapshot comme base.
-  // Les périodes suivantes neutralisent les flux avec Modified Dietz ; lorsque
-  // chaque flux externe dispose d'un snapshot, le résultat converge vers le TWR exact.
+  // S'il n'existe pas de valorisation exactement au jour de départ, le premier
+  // snapshot disponible sert d'ancrage. On conserve sa performance historique
+  // comme approximation uniquement pour la portion antérieure à ce snapshot ;
+  // toutes les périodes suivantes sont neutralisées des vrais flux du journal.
   if (firstTimestamp > startTimestamp) {
     if (
       firstStoredPerformance !== null
@@ -533,13 +525,22 @@ function applyTimeWeightedPerformance(
     }
   }
 
+  // Les snapshots antérieurs au début du périmètre ne doivent pas apparaître
+  // sur le graphe TWR, sinon ils donnent visuellement l'impression que la
+  // performance commence avant la première opération réellement suivie.
+  const scopedSnapshots = snapshots.filter(
+    (snapshot) =>
+      startTimestamp <= 0
+      || performanceTimestamp(snapshot.date) >= startTimestamp,
+  );
+
   return {
     ...data,
     summary: {
       ...data.summary,
       performance_percent: (cumulativeFactor - 1) * 100,
     },
-    snapshots,
+    snapshots: scopedSnapshots,
   };
 }
 
