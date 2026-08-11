@@ -152,7 +152,6 @@ export type NewOnlineSecurity = {
   region?: string | null;
 };
 
-
 export type PriceUpdateLine = {
   security_id: string;
   name: string;
@@ -245,7 +244,6 @@ export type NewSecurityInput = {
   current_price: number;
 };
 
-
 export type NewAccountInput = {
   name: string;
   account_type: "current_account" | "pea" | "pea_pme" | "cto" | "pee" | "per" | "assurance_vie" | "livret_a" | "ldds" | "pel" | "savings_account" | "crypto_wallet" | "other";
@@ -262,6 +260,288 @@ export type UpdateAccountInput = {
   currency: string;
   include_in_net_worth: boolean;
 };
+
+type ExternalFlow = {
+  date: string;
+  amount: number;
+};
+
+type TwrPoint = {
+  date: string;
+  totalValue: number;
+  investedCapital: number;
+  snapshotIndex: number | null;
+};
+
+const millisecondsPerDay = 86_400_000;
+
+function performanceTimestamp(value: string) {
+  const timestamp = new Date(`${value}T12:00:00Z`).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function accountIsInPerformanceScope(
+  accountId: string | null,
+  selectedAccountIds: Set<string>,
+) {
+  return accountId !== null && selectedAccountIds.has(accountId);
+}
+
+function externalFlowForTransaction(
+  transaction: DbTransaction,
+  selectedAccountIds: Set<string>,
+): number {
+  const amount = Number(transaction.amount);
+  const safeAmount = Number.isFinite(amount) ? amount : 0;
+  const accountSelected = accountIsInPerformanceScope(
+    transaction.account_id,
+    selectedAccountIds,
+  );
+  const fromSelected = accountIsInPerformanceScope(
+    transaction.from_account_id,
+    selectedAccountIds,
+  );
+  const toSelected = accountIsInPerformanceScope(
+    transaction.to_account_id,
+    selectedAccountIds,
+  );
+
+  if (transaction.transaction_type === "opening_cash") {
+    return accountSelected || toSelected ? safeAmount : 0;
+  }
+
+  if (transaction.transaction_type === "opening_position") {
+    if (!accountSelected) return 0;
+
+    const quantity = Number(transaction.quantity ?? 0);
+    const price = Number(transaction.price ?? 0);
+    const openingCost = quantity * price;
+
+    return Number.isFinite(openingCost) ? openingCost : 0;
+  }
+
+  if (transaction.transaction_type === "deposit") {
+    const targetSelected =
+      toSelected || (transaction.to_account_id === null && accountSelected);
+    return targetSelected ? safeAmount : 0;
+  }
+
+  if (transaction.transaction_type === "withdrawal") {
+    const sourceSelected =
+      fromSelected || (transaction.from_account_id === null && accountSelected);
+    return sourceSelected ? -safeAmount : 0;
+  }
+
+  if (transaction.transaction_type === "transfer") {
+    if (fromSelected && !toSelected) return -safeAmount;
+    if (!fromSelected && toSelected) return safeAmount;
+  }
+
+  return 0;
+}
+
+function buildExternalFlows(
+  transactions: DbTransaction[],
+  selectedAccountIds: Set<string>,
+): ExternalFlow[] {
+  return transactions
+    .map((transaction) => ({
+      date: transaction.date,
+      amount: externalFlowForTransaction(transaction, selectedAccountIds),
+    }))
+    .filter(
+      (flow) =>
+        performanceTimestamp(flow.date) > 0
+        && Number.isFinite(flow.amount)
+        && Math.abs(flow.amount) > 0.000001,
+    )
+    .sort(
+      (left, right) =>
+        performanceTimestamp(left.date) - performanceTimestamp(right.date),
+    );
+}
+
+function modifiedDietzReturn(
+  previous: TwrPoint,
+  current: TwrPoint,
+  flows: ExternalFlow[],
+) {
+  const startTimestamp = performanceTimestamp(previous.date);
+  const endTimestamp = performanceTimestamp(current.date);
+  const durationDays = Math.max(
+    (endTimestamp - startTimestamp) / millisecondsPerDay,
+    1,
+  );
+
+  const intervalFlows = flows.filter((flow) => {
+    const timestamp = performanceTimestamp(flow.date);
+    return timestamp > startTimestamp && timestamp <= endTimestamp;
+  });
+
+  const transactionFlowTotal = intervalFlows.reduce(
+    (sum, flow) => sum + flow.amount,
+    0,
+  );
+  const capitalDelta = current.investedCapital - previous.investedCapital;
+  const unrecordedFlow = capitalDelta - transactionFlowTotal;
+  const allFlows =
+    Math.abs(unrecordedFlow) > 0.01
+      ? [...intervalFlows, { date: current.date, amount: unrecordedFlow }]
+      : intervalFlows;
+
+  const totalFlow = allFlows.reduce((sum, flow) => sum + flow.amount, 0);
+  const weightedFlow = allFlows.reduce((sum, flow) => {
+    const flowTimestamp = performanceTimestamp(flow.date);
+    const remainingDays = Math.max(
+      (endTimestamp - flowTimestamp) / millisecondsPerDay,
+      0,
+    );
+    const weight = Math.min(Math.max(remainingDays / durationDays, 0), 1);
+    return sum + flow.amount * weight;
+  }, 0);
+
+  const denominator = previous.totalValue + weightedFlow;
+
+  if (!Number.isFinite(denominator) || Math.abs(denominator) <= 0.000001) {
+    return 0;
+  }
+
+  const periodReturn =
+    (current.totalValue - previous.totalValue - totalFlow) / denominator;
+
+  return Number.isFinite(periodReturn) && periodReturn > -1
+    ? periodReturn
+    : 0;
+}
+
+function applyTimeWeightedPerformance(
+  data: DashboardData,
+  transactions: DbTransaction[],
+  scopedAccountIds?: string[],
+): DashboardData {
+  const selectedAccountIds = new Set(
+    scopedAccountIds
+      ?? data.accounts
+        .filter((account) => account.include_in_net_worth)
+        .map((account) => account.id),
+  );
+
+  if (selectedAccountIds.size === 0) return data;
+
+  const snapshots = data.snapshots.map((snapshot) => ({ ...snapshot }));
+  const points = snapshots
+    .map<TwrPoint | null>((snapshot, snapshotIndex) => {
+      const totalValue = Number(snapshot.total_value);
+      const investedCapital = Number(snapshot.invested_capital);
+
+      if (
+        performanceTimestamp(snapshot.date) <= 0
+        || !Number.isFinite(totalValue)
+        || snapshot.invested_capital === null
+        || !Number.isFinite(investedCapital)
+      ) {
+        return null;
+      }
+
+      return {
+        date: snapshot.date,
+        totalValue,
+        investedCapital,
+        snapshotIndex,
+      };
+    })
+    .filter((point): point is TwrPoint => point !== null)
+    .sort(
+      (left, right) =>
+        performanceTimestamp(left.date) - performanceTimestamp(right.date),
+    );
+
+  if (points.length === 0) return data;
+
+  const currentInvestedCapital =
+    data.summary.total - data.summary.performance_amount;
+  const today = new Date().toISOString().slice(0, 10);
+  const lastPoint = points[points.length - 1];
+
+  if (
+    Number.isFinite(data.summary.total)
+    && Number.isFinite(currentInvestedCapital)
+    && (
+      performanceTimestamp(today) > performanceTimestamp(lastPoint.date)
+      || Math.abs(data.summary.total - lastPoint.totalValue) > 0.005
+      || Math.abs(currentInvestedCapital - lastPoint.investedCapital) > 0.005
+    )
+  ) {
+    points.push({
+      date: today,
+      totalValue: data.summary.total,
+      investedCapital: currentInvestedCapital,
+      snapshotIndex: null,
+    });
+  }
+
+  const flows = buildExternalFlows(transactions, selectedAccountIds);
+  const firstPoint = points[0];
+  const firstStoredPerformanceValue =
+    firstPoint.snapshotIndex === null
+      ? null
+      : snapshots[firstPoint.snapshotIndex].performance_percent;
+  const firstStoredPerformance =
+    firstStoredPerformanceValue === null
+      ? null
+      : Number(firstStoredPerformanceValue);
+  const startTimestamp = performanceTimestamp(data.summary.start_date);
+  const firstTimestamp = performanceTimestamp(firstPoint.date);
+
+  let cumulativeFactor = 1;
+
+  // Si l'historique de snapshots commence après le début réel du portefeuille,
+  // on conserve la performance déjà connue au premier snapshot comme base.
+  // Les périodes suivantes neutralisent les flux avec Modified Dietz ; lorsque
+  // chaque flux externe dispose d'un snapshot, le résultat converge vers le TWR exact.
+  if (firstTimestamp > startTimestamp) {
+    if (
+      firstStoredPerformance !== null
+      && Number.isFinite(firstStoredPerformance)
+    ) {
+      cumulativeFactor = Math.max(1 + firstStoredPerformance / 100, 0.000001);
+    } else if (Math.abs(firstPoint.investedCapital) > 0.000001) {
+      cumulativeFactor = Math.max(
+        firstPoint.totalValue / firstPoint.investedCapital,
+        0.000001,
+      );
+    }
+  }
+
+  if (firstPoint.snapshotIndex !== null) {
+    snapshots[firstPoint.snapshotIndex].performance_percent =
+      (cumulativeFactor - 1) * 100;
+  }
+
+  for (let index = 1; index < points.length; index += 1) {
+    const periodReturn = modifiedDietzReturn(
+      points[index - 1],
+      points[index],
+      flows,
+    );
+    cumulativeFactor *= 1 + periodReturn;
+
+    const snapshotIndex = points[index].snapshotIndex;
+    if (snapshotIndex !== null) {
+      snapshots[snapshotIndex].performance_percent =
+        (cumulativeFactor - 1) * 100;
+    }
+  }
+
+  return {
+    ...data,
+    summary: {
+      ...data.summary,
+      performance_percent: (cumulativeFactor - 1) * 100,
+    },
+    snapshots,
+  };
+}
 
 export async function getAccounts() {
   return invoke<DbAccount[]>("get_accounts");
@@ -280,11 +560,21 @@ export async function getPortfolioOverview() {
 }
 
 export async function getDashboardData() {
-  return invoke<DashboardData>("get_dashboard_data");
+  const [data, transactions] = await Promise.all([
+    invoke<DashboardData>("get_dashboard_data"),
+    invoke<DbTransaction[]>("get_transactions"),
+  ]);
+
+  return applyTimeWeightedPerformance(data, transactions);
 }
 
 export async function getScopedDashboardData(accountIds: string[]) {
-  return invoke<DashboardData>("get_scoped_dashboard_data", { accountIds });
+  const [data, transactions] = await Promise.all([
+    invoke<DashboardData>("get_scoped_dashboard_data", { accountIds }),
+    invoke<DbTransaction[]>("get_transactions"),
+  ]);
+
+  return applyTimeWeightedPerformance(data, transactions, accountIds);
 }
 
 export async function getTransactions() {
@@ -333,11 +623,9 @@ export async function createSecurityFromOnlineResult(input: NewOnlineSecurity) {
   return invoke<DbSecurity>("create_security_from_online_result", { input });
 }
 
-
 export async function updateOpenPositionPrices() {
   return invoke<PriceUpdateSummary>("update_open_position_prices");
 }
-
 
 export async function updateTransaction(input: UpdateTransactionInput) {
   return invoke<string>("update_transaction", { input });
@@ -346,7 +634,6 @@ export async function updateTransaction(input: UpdateTransactionInput) {
 export async function deleteTransaction(transactionId: string) {
   return invoke<string>("delete_transaction", { transactionId });
 }
-
 
 export async function createOpeningPositionAdjustments() {
   return invoke<number>("create_opening_position_adjustments");
