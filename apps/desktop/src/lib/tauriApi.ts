@@ -370,10 +370,13 @@ function modifiedDietzReturn(
     1,
   );
 
-  // Source de vérité des flux : le journal de transactions. Le champ
-  // invested_capital des anciens snapshots peut contenir des ajustements
-  // techniques d'ouverture ; l'utiliser comme flux implicite créait de faux
-  // décrochages de performance (notamment le -13 % observé sur l'historique).
+  // Les snapshots Atlas sont enregistrés après les opérations de la journée.
+  // Un versement daté exactement comme le snapshot final a donc financé les
+  // opérations de cette journée : il doit entrer à 100 % dans le dénominateur.
+  // Sans cela, un versement de 300 € sur un portefeuille de 20 € faisait
+  // artificiellement apparaître les quelques euros de frais comme une chute
+  // d'environ 13 %. Les flux situés entre deux snapshots restent pondérés dans
+  // le temps selon Modified Dietz.
   const intervalFlows = flows.filter((flow) => {
     const timestamp = performanceTimestamp(flow.date);
     return timestamp > startTimestamp && timestamp <= endTimestamp;
@@ -382,6 +385,11 @@ function modifiedDietzReturn(
   const totalFlow = intervalFlows.reduce((sum, flow) => sum + flow.amount, 0);
   const weightedFlow = intervalFlows.reduce((sum, flow) => {
     const flowTimestamp = performanceTimestamp(flow.date);
+
+    if (flowTimestamp === endTimestamp) {
+      return sum + flow.amount;
+    }
+
     const remainingDays = Math.max(
       (endTimestamp - flowTimestamp) / millisecondsPerDay,
       0,
